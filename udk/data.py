@@ -90,7 +90,55 @@ def best_xor(b):
     return best[:2]
 
 
-def peel(b, depth=0):
+class KeyRing:
+    """Candidate repeating XOR keys, taken from the game's own string literals.
+    A key that decoded one file is tried first on the next."""
+
+    def __init__(self, literals=()):
+        seen = set()
+        self.keys = []
+        for t in literals:
+            if 4 <= len(t) <= 64 and t.isascii() and t.isprintable() and t not in seen:
+                seen.add(t)
+                self.keys.append(t)
+        self.hits = []
+
+    def find(self, b):
+        try:
+            text = b[:4096].decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        for key in self.hits + self.keys:
+            out = xor_key(b[:4096], text, key, check_only=True)
+            if out is not None and text_score(out) > 0.98 and common_share(out) > 0.6:
+                if key not in self.hits:
+                    self.hits.insert(0, key)
+                return key
+        return None
+
+
+def common_share(b):
+    return sum(1 for c in b if c in COMMON) / max(1, len(b))
+
+
+def xor_key(b, text, key, check_only=False):
+    """XOR with a repeating key. Games often XOR the C# string per character and then
+    write UTF-8, so when the input is valid UTF-8 the key runs over characters."""
+    kb = key.encode()
+    if text is not None:
+        probe = text[:12] if check_only else text
+        if check_only and not all(32 <= (ord(c) ^ kb[i % len(kb)]) < 127 or (ord(c) ^ kb[i % len(kb)]) in (9, 10, 13)
+                                  for i, c in enumerate(probe)):
+            return None
+        src = text if check_only else b.decode("utf-8")
+        return "".join(chr(ord(c) ^ kb[i % len(kb)]) for i, c in enumerate(src)).encode("utf-8")
+    if check_only and not all(32 <= (c ^ kb[i % len(kb)]) < 127 or (c ^ kb[i % len(kb)]) in (9, 10, 13)
+                              for i, c in enumerate(b[:12])):
+        return None
+    return bytes(c ^ kb[i % len(kb)] for i, c in enumerate(b))
+
+
+def peel(b, ring=None, depth=0):
     """Return (decoded bytes, layers, kind). Layers is a list like ['xor 0xCC', 'gzip']."""
     for magic, kind in MAGIC:
         if b.startswith(magic):
@@ -98,7 +146,7 @@ def peel(b, depth=0):
     for magic, name, fn in UNWRAP:
         if b.startswith(magic):
             try:
-                out, layers, kind = peel(fn(b), depth + 1)
+                out, layers, kind = peel(fn(b), ring, depth + 1)
                 return out, [name] + layers, kind
             except Exception:
                 pass
@@ -107,16 +155,24 @@ def peel(b, depth=0):
     if depth < 2:
         k, sc = best_xor(b)
         if k is not None and sc > 0.98:
-            out, layers, kind = peel(b.translate(XOR_TABLES[k]), depth + 1)
+            out, layers, kind = peel(b.translate(XOR_TABLES[k]), ring, depth + 1)
             return out, [f"xor 0x{k:02X}"] + layers, kind
         for magic, name, fn in UNWRAP:
             for k in range(1, 256):
                 if b[: len(magic)].translate(XOR_TABLES[k]) == magic:
                     try:
-                        out, layers, kind = peel(fn(b.translate(XOR_TABLES[k])), depth + 1)
+                        out, layers, kind = peel(fn(b.translate(XOR_TABLES[k])), ring, depth + 1)
                         return out, [f"xor 0x{k:02X}", name] + layers, kind
                     except Exception:
                         pass
+        key = ring.find(b) if ring else None
+        if key is not None:
+            try:
+                text = b.decode("utf-8")
+            except UnicodeDecodeError:
+                text = None
+            out, layers, kind = peel(xor_key(b, text, key), ring, depth + 1)
+            return out, [f"xor key {key!r}" + (" per char" if text is not None else "")] + layers, kind
     e = entropy(b)
     if e > 7.9 and len(b) % 16 == 0:
         return b, [], "encrypted-block-cipher?"
@@ -126,33 +182,37 @@ def peel(b, depth=0):
 
 
 SKIP_DIRS = {"aa", "StandaloneWindows64", "Android", "iOS"}
+TEXT_EXT = ("csv", "lua", "json", "xml", "tsv", "txt", "png", "jpg", "ogg")
 
 
-def walk(roots):
+def files_under(roots):
+    """Loose files on disk as (output name, bytes) pairs."""
     for root in roots:
+        top = os.path.basename(os.path.normpath(root))
         for d, dirs, files in os.walk(root):
             dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
             for f in files:
-                yield root, os.path.join(d, f)
+                p = os.path.join(d, f)
+                yield os.path.join(top, os.path.relpath(p, root)), open(p, "rb").read()
 
 
-def run(roots, out_dir):
+def run(items, out_dir, literals=()):
+    """items: (name, bytes) pairs. Writes decoded copies and report.tsv under out_dir."""
     os.makedirs(out_dir, exist_ok=True)
+    ring = KeyRing(literals)
     rows = []
-    for root, path in walk(roots):
-        raw = open(path, "rb").read()
-        dec, layers, kind = peel(raw)
-        rel = os.path.relpath(path, root)
+    for name, raw in items:
+        dec, layers, kind = peel(raw, ring)
         dest = ""
-        if kind not in ("unity-bundle",):
-            stem = os.path.splitext(rel)[0] if layers or kind in ("csv", "lua", "json", "xml", "tsv") else rel
-            ext = "." + kind if kind in ("csv", "lua", "json", "xml", "tsv", "txt", "png", "jpg", "ogg") else ""
-            dest = os.path.join(os.path.basename(os.path.normpath(root)), stem + (ext if not stem.endswith(ext) else ""))
+        if kind != "unity-bundle":
+            stem = os.path.splitext(name)[0] if layers or kind in TEXT_EXT[:5] else name
+            ext = "." + kind if kind in TEXT_EXT else ""
+            dest = stem if stem.endswith(ext) else stem + ext
             full = os.path.join(out_dir, dest)
             os.makedirs(os.path.dirname(full), exist_ok=True)
             with open(full, "wb") as fh:
                 fh.write(dec)
-        rows.append((rel, " > ".join(layers) or "-", kind, len(raw), dest))
+        rows.append((name, " > ".join(layers) or "-", kind, len(raw), dest))
     with open(os.path.join(out_dir, "report.tsv"), "w", encoding="utf-8") as fh:
         fh.write("path\tlayers\tkind\tbytes\tdecoded\n")
         for r in rows:
