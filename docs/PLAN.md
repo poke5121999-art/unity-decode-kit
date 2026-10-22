@@ -24,3 +24,14 @@ Phiếu gốc: `~/handoff/2026-10-22-unity-decode-tool.md`.
 8. Runtime hook: thử, báo khả thi.
 
 Nhật ký quyết định: `docs/decisions.tsv`.
+
+## Việc còn lại (cập nhật 2026-10-22 20:40)
+
+Theo yêu cầu của chủ máy: làm đủ mọi năng lực, vòng đo → sửa → đo lại, reviewer độc lập cuối cùng.
+
+- VOID DIVER: build lại đầy đủ (assembly trả phí, sửa tail call) → chấm 83 mục `[SUY LUẬN]`/`[CHƯA RÕ]` bằng subagent chỉ dùng `udk` → sửa hổng → lặp.
+- Shader: AssetRipper Free chỉ ra shader rỗng. VOID DIVER là DXBC (D3D11, platform 4); Zing Speed là GLES. Hướng: DXBC → HLSL (3Dmigoto cmd_Decompiler dưới wine, hoặc vkd3d-shader → SPIR-V → SPIRV-Cross); GLSL → SPIR-V (glslang) → HLSL (SPIRV-Cross); bọc lại thành ShaderLab theo property/binding trong asset Shader.
+- Plugin native (`libNssPhysicsPlugin.so` của Zing Speed): Ghidra auto-analysis có symbol export.
+- Runtime: chạy thử `udk trace` với game thật (VOID DIVER qua Proton của phiên anh em, `-batchmode -nographics`).
+- Zing Speed → project Unity 6000.3.18f1 chơi được: export, bước nâng cấp 2019.4 → 6 tổng quát (API updater, pipeline, package), ghi lại thứ vỡ và cách kit sửa.
+- Soul Knight 8.6: chạy toàn bộ pipeline, chấm data với `~/sk86-ref/decoded/config`.
