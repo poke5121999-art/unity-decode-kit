@@ -191,15 +191,15 @@ def neutralize_types(b, n_typedefs, n_params=1 << 20):
                         struct.pack_into("<II", b, p, 0, IL2CPP_TYPE_OBJECT << 16)
                         CORRUPT.add(p)
                         bad += 1
-                return hex(reg), types_count, bad, drop_decoy_method_specs(b, reg)
+                return hex(reg), types_count, bad, bad_method_specs(b, reg)
         i = b.find(pat, i + 1)
     return None
 
 
-def drop_decoy_method_specs(b, reg, n_methods=None):
-    """If methodSpecs is mostly duplicates or out-of-range entries (a decoy the protector replaces at
-    run time), zero methodSpecsCount and genericMethodTableCount so tools read everything else;
-    only generic method instantiations are lost. Returns the number of bad entries seen."""
+def bad_method_specs(b, reg):
+    """Count methodSpecs entries that are duplicates or point outside the generic instance table.
+    Seen (Zing Speed): 12,408 of 232,264, in 16 KB runs overwritten with another table. The patched
+    Il2CppInspector skips such entries one by one, so the table stays and the rest keep their names."""
     count, ptr = struct.unpack_from("<II", b, reg + 32)
     insts = struct.unpack_from("<I", b, reg + 8)[0]
     if not 0 < count < 10_000_000 or ptr + 12 * count > len(b):
@@ -210,9 +210,6 @@ def drop_decoy_method_specs(b, reg, n_methods=None):
         if t in seen or t[0] < 0 or not -1 <= t[1] < insts or not -1 <= t[2] < insts:
             bad += 1
         seen.add(t)
-    if bad > count // 100:
-        struct.pack_into("<I", b, reg + 32, 0)
-        struct.pack_into("<I", b, reg + 16, 0)
     return bad
 
 

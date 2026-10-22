@@ -114,6 +114,34 @@ for i, m in enumerate(game, 1):
         log(f"typed {i}/{len(game)}")
 log(f"game methods typed, {bad_sigs[0]} signatures failed to parse")
 
+# Functions created without analysis have one-byte bodies, so Ghidra cannot tell that a jmp to
+# another method is a tail call and the decompiler inlines the callee. Disassemble each game
+# function, recompute its body, and mark jmps to a function entry as CALL_RETURN.
+from ghidra.app.cmd.function import CreateFunctionCmd  # noqa: E402
+from ghidra.program.model.listing import FlowOverride  # noqa: E402
+
+fm = currentProgram.getFunctionManager()
+listing = currentProgram.getListing()
+tails = 0
+for i, m in enumerate(game, 1):
+    a = int(m["virtualAddress"], 16)
+    if a == 0:
+        continue
+    addr = toAddr(java.lang.Long(a))
+    disassemble(addr)
+    f = fm.getFunctionAt(addr)
+    if f is None:
+        continue
+    CreateFunctionCmd.fixupFunctionBody(currentProgram, f, monitor)
+    for ins in listing.getInstructions(f.getBody(), True):
+        ft = ins.getFlowType()
+        if ft.isJump() and not ft.isConditional() and any(fm.getFunctionAt(t) is not None for t in ins.getFlows()):
+            ins.setFlowOverride(FlowOverride.CALL_RETURN)
+            tails += 1
+    if i % 5000 == 0:
+        log(f"bodies {i}/{len(game)}")
+log(f"function bodies fixed, {tails} tail calls marked")
+
 for d in meta["stringLiterals"]:
     context.define_string(d)
 for d in meta["typeInfoPointers"]:

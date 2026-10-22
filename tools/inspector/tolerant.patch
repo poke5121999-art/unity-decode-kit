@@ -1,0 +1,264 @@
+diff --git a/Il2CppInspector.Common/Cpp/CppDeclarationGenerator.cs b/Il2CppInspector.Common/Cpp/CppDeclarationGenerator.cs
+index aaed003..75a2973 100644
+--- a/Il2CppInspector.Common/Cpp/CppDeclarationGenerator.cs
++++ b/Il2CppInspector.Common/Cpp/CppDeclarationGenerator.cs
+@@ -246,13 +246,17 @@ public class CppDeclarationGenerator
+     private List<(TypeInfo ilType, CppComplexType valueType, CppComplexType referenceType, CppComplexType fieldsType)> GenerateVisitedFieldStructs() {
+         var structs = new List<(TypeInfo ilType, CppComplexType valueType, CppComplexType referenceType, CppComplexType fieldsType)>(_todoTypeStructs.Count);
+         foreach (var ti in _todoFieldStructs) {
+-            if (ti.IsEnum || ti.IsValueType) {
+-                var (valueType, boxedType) = GenerateValueFieldStruct(ti);
+-                structs.Add((ti, valueType, boxedType, null));
+-            }
+-            else {
+-                var (objectOrArrayType, fieldsType) = GenerateRefFieldStruct(ti);
+-                structs.Add((ti, null, objectOrArrayType, fieldsType));
++            try {
++                if (ti.IsEnum || ti.IsValueType) {
++                    var (valueType, boxedType) = GenerateValueFieldStruct(ti);
++                    structs.Add((ti, valueType, boxedType, null));
++                }
++                else {
++                    var (objectOrArrayType, fieldsType) = GenerateRefFieldStruct(ti);
++                    structs.Add((ti, null, objectOrArrayType, fieldsType));
++                }
++            } catch (Exception e) when (e is not OutOfMemoryException) {
++                structs.Add((ti, null, GenerateDamagedStruct(ti, e), null));
+             }
+         }
+         _todoFieldStructs.Clear();
+@@ -303,7 +307,7 @@ public class CppDeclarationGenerator
+             var impl = implementation.GetVTable();
+ 
+             res = (MethodBase[])res.Clone();
+-            for (int i = 0; i < res.Length; i++)
++            for (int i = 0; i < res.Length && i < impl.Length; i++)
+             {
+                 res[i] ??= impl[i];
+             }
+@@ -342,6 +346,18 @@ public class CppDeclarationGenerator
+     /// </summary>
+     /// <param name="ti"></param>
+     public void IncludeType(TypeInfo ti)
++    {
++        // A protected build can leave a type half-readable; emit it as an empty struct instead of aborting the whole output.
++        try {
++            IncludeTypeChecked(ti);
++        } catch (Exception e) when (e is not OutOfMemoryException) {
++            Console.Error.WriteLine($"Damaged type emitted empty: {ti?.FullName} ({e.GetType().Name})");
++            _todoTypeStructs.Remove(ti);
++            _todoTypesExceedingNestingLimit.Add(ti);
++        }
++    }
++
++    private void IncludeTypeChecked(TypeInfo ti)
+     {
+         if (_visitedTypes.Contains(ti))
+             return;
+@@ -472,9 +488,22 @@ public class CppDeclarationGenerator
+         return (cls, statics, vtable);
+     }
+ 
++    // A protected build can leave a type half-readable: emit an empty struct, under a fresh name if
++    // the real one is already taken by a declaration of another kind.
++    private CppComplexType GenerateDamagedStruct(TypeInfo ti, Exception e)
++    {
++        Console.Error.WriteLine($"Damaged type emitted empty: {ti?.FullName} ({e.GetType().Name})");
++        var name = TypeNamer.GetName(ti);
++        while (types.Types.TryGetValue(name, out var t) && t is not CppComplexType)
++            name += "__damaged";
++        return types.Struct(name);
++    }
++
+     private CppComplexType GenerateNestingLimitExceededStruct(TypeInfo ti)
+     {
+         var name = TypeNamer.GetName(ti);
++        while (types.Types.TryGetValue(name, out var t) && t is not CppComplexType)
++            name += "__damaged";
+         var cls = types.Struct(name);
+         return cls;
+     }
+@@ -494,8 +523,12 @@ public class CppDeclarationGenerator
+ 
+         foreach (var ti in _todoTypeStructs)
+         {
+-            var (cls, statics, vtable) = GenerateTypeStruct(ti);
+-            decl.Add((ti, null, cls, null, vtable, statics));
++            try {
++                var (cls, statics, vtable) = GenerateTypeStruct(ti);
++                decl.Add((ti, null, cls, null, vtable, statics));
++            } catch (Exception e) when (e is not OutOfMemoryException) {
++                decl.Add((ti, null, GenerateDamagedStruct(ti, e), null, null, null));
++            }
+         }
+         
+         foreach (var ti in _todoTypesExceedingNestingLimit)
+diff --git a/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs b/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs
+index 5029bdf..9068e07 100644
+--- a/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs
++++ b/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs
+@@ -477,8 +477,12 @@ namespace Il2CppInspector
+             var genericMethodPointers = Image.ReadMappedUWordArray(CodeRegistration.GenericMethodPointers, (int) CodeRegistration.GenericMethodPointersCount);
+             var genericMethodTable = Image.ReadMappedVersionedObjectArray<Il2CppGenericMethodFunctionsDefinitions>(MetadataRegistration.GenericMethodTable, (int) MetadataRegistration.GenericMethodTableCount);
+             foreach (var tableEntry in genericMethodTable) {
+-                GenericMethodPointers.Add(MethodSpecs[tableEntry.GenericMethodIndex], genericMethodPointers[tableEntry.Indices.MethodIndex]);
+-                GenericMethodInvokerIndices.Add(MethodSpecs[tableEntry.GenericMethodIndex], tableEntry.Indices.InvokerIndex);
++                // udk tolerant: skip entries that point outside the (possibly damaged) tables
++                if (tableEntry.GenericMethodIndex < 0 || tableEntry.GenericMethodIndex >= MethodSpecs.Length
++                    || tableEntry.Indices.MethodIndex < 0 || tableEntry.Indices.MethodIndex >= genericMethodPointers.Length)
++                    continue;
++                GenericMethodPointers.TryAdd(MethodSpecs[tableEntry.GenericMethodIndex], genericMethodPointers[tableEntry.Indices.MethodIndex]);
++                GenericMethodInvokerIndices.TryAdd(MethodSpecs[tableEntry.GenericMethodIndex], tableEntry.Indices.InvokerIndex);
+             }
+ 
+             TypeDefinitionSizes = Image.ReadMappedVersionedObjectPointerArray<Il2CppTypeDefinitionSizes>(
+diff --git a/Il2CppInspector.Common/Model/AppModel.cs b/Il2CppInspector.Common/Model/AppModel.cs
+index 309f5d7..4bf32c3 100644
+--- a/Il2CppInspector.Common/Model/AppModel.cs
++++ b/Il2CppInspector.Common/Model/AppModel.cs
+@@ -200,7 +200,10 @@ namespace Il2CppInspector.Model
+             // Add generic methods definitions and types used by them to C++ type model
+             Group = "types_from_generic_methods";
+ 
++            // udk tolerant: an overwritten method spec can resolve to a method already declared; keep the first
+             foreach (var method in TypeModel.GenericMethods.Values.Where(m => m.VirtualAddress.HasValue)) {
++                if (Methods.ContainsKey(method))
++                    continue;
+                 declarationGenerator.IncludeMethod(method);
+                 AddTypes(declarationGenerator.GenerateRemainingTypeDeclarations());
+ 
+@@ -215,6 +218,8 @@ namespace Il2CppInspector.Model
+             if (Package.MetadataUsages != null)
+                 foreach (var usage in Package.MetadataUsages) {
+                     var address = usage.VirtualAddress;
++                    // A protected build can point a usage at a damaged or missing type/method; skip that usage only.
++                    try {
+ 
+                     switch (usage.Type) {
+                         case Il2CppMetadataUsageType.StringLiteral:
+@@ -285,6 +290,9 @@ namespace Il2CppInspector.Model
+ 
+                             break;
+                     }
++                    } catch (Exception e) when (e is not OutOfMemoryException) {
++                        Console.Error.WriteLine($"Metadata usage skipped: {usage.Type} at 0x{address:X} ({e.GetType().Name})");
++                    }
+                 }
+ 
+             // Add string literals for metadata <19 to the model
+diff --git a/Il2CppInspector.Common/Outputs/CSharpCodeStubs.cs b/Il2CppInspector.Common/Outputs/CSharpCodeStubs.cs
+index 52768a7..6576a74 100644
+--- a/Il2CppInspector.Common/Outputs/CSharpCodeStubs.cs
++++ b/Il2CppInspector.Common/Outputs/CSharpCodeStubs.cs
+@@ -372,7 +372,16 @@ namespace Il2CppInspector.Outputs
+             return text.ToString().TrimEnd();
+         }
+ 
++        // A protected build can leave a type half-readable; write a marker comment for it instead of aborting the file.
+         private StringBuilder generateType(TypeInfo type, IEnumerable<string> namespaces, string prefix = "") {
++            try {
++                return generateTypeChecked(type, namespaces, prefix);
++            } catch (Exception e) when (e is not OutOfMemoryException) {
++                return new StringBuilder($"{prefix}// Damaged type {type?.FullName}: {e.GetType().Name}{Environment.NewLine}");
++            }
++        }
++
++        private StringBuilder generateTypeChecked(TypeInfo type, IEnumerable<string> namespaces, string prefix) {
+             // Don't output compiler-generated types if desired
+             if (MustCompile && type.GetCustomAttributes(CGAttribute).Any())
+                 return new StringBuilder();
+diff --git a/Il2CppInspector.Common/Reflection/Extensions.cs b/Il2CppInspector.Common/Reflection/Extensions.cs
+index e93ee78..7132481 100644
+--- a/Il2CppInspector.Common/Reflection/Extensions.cs
++++ b/Il2CppInspector.Common/Reflection/Extensions.cs
+@@ -263,7 +263,8 @@ namespace Il2CppInspector.Reflection
+                     var setFlags = values.Where(x => (Convert.ToInt64(x.Value) & flagValue) == Convert.ToInt64(x.Value)).Select(x => typeName + "." + x.Key);
+                     return string.Join(" | ", setFlags);
+                 } else {
+-                    throw new ArgumentException("Unsupported enum underlying type");
++                    // udk tolerant: a damaged build can give an enum a non-integer default; show a cast
++                    return "(" + typeName + ") " + value;
+                 }
+             }
+             // Structs and generic type parameters must use 'default' rather than 'null'
+diff --git a/Il2CppInspector.Common/Reflection/TypeInfo.cs b/Il2CppInspector.Common/Reflection/TypeInfo.cs
+index 707d3f0..dd8478f 100644
+--- a/Il2CppInspector.Common/Reflection/TypeInfo.cs
++++ b/Il2CppInspector.Common/Reflection/TypeInfo.cs
+@@ -446,7 +446,7 @@ namespace Il2CppInspector.Reflection
+             // We're also in the same scope the type is defined in if we're looking for a nested type
+             // that is declared in a type we derive from
+             for (var b = scope.Current?.BaseType; b != null; b = b.BaseType)
+-                if (b.FullName.Replace('+', '.') == declaringScope)
++                if (b.FullName?.Replace('+', '.') == declaringScope)
+                     return base.Name;
+ 
+             // Find first difference in the declaring scope from the using scope, moving one namespace/type name at a time
+@@ -932,10 +932,11 @@ namespace Il2CppInspector.Reflection
+             if (!ContainsGenericParameters)
+                 return this;
+ 
++            // udk tolerant: damaged generic instances can be short of arguments; keep the parameter
+             if (IsGenericTypeParameter)
+-                return typeArguments[GenericParameterPosition];
++                return typeArguments != null && GenericParameterPosition < typeArguments.Length ? typeArguments[GenericParameterPosition] ?? this : this;
+             else if (IsGenericMethodParameter)
+-                return methodArguments[GenericParameterPosition];
++                return methodArguments != null && GenericParameterPosition < methodArguments.Length ? methodArguments[GenericParameterPosition] ?? this : this;
+             else if (IsGenericTypeDefinition)
+                 return MakeGenericType(typeArguments);
+             else if (HasElementType) {
+@@ -948,7 +949,8 @@ namespace Il2CppInspector.Reflection
+                     return elementType.MakePointerType();
+                 throw new InvalidOperationException("TypeInfo element type state is invalid!");
+             } else {
+-                var newGenericArguments = genericArguments.Select(x => x.SubstituteGenericArguments(typeArguments, methodArguments));
++                var newGenericArguments = genericArguments.Select(x => x?.SubstituteGenericArguments(typeArguments, methodArguments)
++                    ?? Assembly.Model.TypesByFullName["System.Object"]);
+                 return genericTypeDefinition.MakeGenericType(newGenericArguments.ToArray());
+             }
+         }
+diff --git a/Il2CppInspector.Common/Reflection/TypeModel.cs b/Il2CppInspector.Common/Reflection/TypeModel.cs
+index fb30cb8..21a03d0 100644
+--- a/Il2CppInspector.Common/Reflection/TypeModel.cs
++++ b/Il2CppInspector.Common/Reflection/TypeModel.cs
+@@ -114,7 +114,9 @@ namespace Il2CppInspector.Reflection
+             }
+ 
+             // Create types and methods from MethodSpec (which incorporates TypeSpec in IL2CPP)
++            // udk tolerant: a protected build can overwrite part of the table; skip entries that do not resolve
+             foreach (var spec in Package.MethodSpecs) {
++              try {
+                 var methodDefinition = MethodsByDefinitionIndex[spec.MethodDefinitionIndex];
+                 var declaringType = methodDefinition.DeclaringType;
+ 
+@@ -139,6 +141,8 @@ namespace Il2CppInspector.Reflection
+                 }
+                 method.VirtualAddress = Package.GetGenericMethodPointer(spec);
+                 GenericMethods[spec] = method;
++              } catch (Exception e) when (e is IndexOutOfRangeException or ArgumentException or NullReferenceException or InvalidCastException) {
++              }
+             }
+ 
+             // Generate a list of all namespaces used
+@@ -384,15 +388,17 @@ namespace Il2CppInspector.Reflection
+         // Get the type used in a metadata usage
+         public TypeInfo GetMetadataUsageType(MetadataUsage usage) => usage.Type switch {
+             Il2CppMetadataUsageType.Il2CppType or Il2CppMetadataUsageType.TypeInfo => TypesByReferenceIndex[usage.SourceIndex],
+-            Il2CppMetadataUsageType.MethodDef or Il2CppMetadataUsageType.MethodRef => GetMetadataUsageMethod(usage).DeclaringType,
++            Il2CppMetadataUsageType.MethodDef or Il2CppMetadataUsageType.MethodRef => GetMetadataUsageMethod(usage)?.DeclaringType,
+             Il2CppMetadataUsageType.FieldInfo or Il2CppMetadataUsageType.FieldRva => TypesByReferenceIndex[Package.FieldRefs[usage.SourceIndex].TypeIndex],
+             _ => throw new InvalidOperationException("Incorrect metadata usage type to retrieve referenced type")
+         };
+ 
+         // Get the method used in a metadata usage
++        // udk tolerant: a damaged build can reference method specs it no longer has; answer null
+         public MethodBase GetMetadataUsageMethod(MetadataUsage usage) => usage.Type switch {
+-            Il2CppMetadataUsageType.MethodDef => MethodsByDefinitionIndex[usage.SourceIndex],
+-            Il2CppMetadataUsageType.MethodRef => GenericMethods[Package.MethodSpecs[usage.SourceIndex]],
++            Il2CppMetadataUsageType.MethodDef => usage.SourceIndex < MethodsByDefinitionIndex.Length ? MethodsByDefinitionIndex[usage.SourceIndex] : null,
++            Il2CppMetadataUsageType.MethodRef => usage.SourceIndex < Package.MethodSpecs.Length
++                && GenericMethods.TryGetValue(Package.MethodSpecs[usage.SourceIndex], out var m) ? m : null,
+             _ => throw new InvalidOperationException("Incorrect metadata usage type to retrieve referenced type")
+         };
+     }
