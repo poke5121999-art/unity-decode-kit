@@ -1,0 +1,4 @@
+#!/bin/sh
+# Entry point: udk <command> ... (see udk/__main__.py)
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$KIT" && exec "$KIT/.venv/bin/python" -m udk "$@"

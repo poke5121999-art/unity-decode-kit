@@ -1,0 +1,84 @@
+id	source	tag	text
+W001	tools/fx_README.md:158	SUY_LUAN	  - Web (`vfx.js runScript`)  như trên; thu xích làm theo mã (ease OutQuad mặc định của DOTween [SUY LUẬN]), stage truyền `hbTime {col, dur}`. Bản 2026-09-25 đoán sai phần vfx gắn mục tiêu (dùng 01_01).
+W002	tools/fx_README.md:168	SUY_LUAN	- Khung chậm còn lại (30–77 ms) khi không có chương trình mới  [SUY LUẬN] rasterizer phần mềm của headless phải tô các hạt to phủ màn hình (flash trắng); chưa đo trên GPU thật.
+W003	tools/fx_README.md:177	SUY_LUAN	- **Màu [HDR] không đổi sRGB (2026-09-25; kiểm lại 2026-09-26).** [ĐO] `PlayerSettings.m_ActiveColorSpace = 1` (Linear, globalgamemanagers, Unity 6000.3.5f2). [ĐO] Không mã VFX/skill nào đặt màu vật liệu lúc chạy (`Material.SetColor`/`MaterialPropertyBlock.SetColor` chỉ ở UI/TMP, DOTween, OutlineObject, UnitHighlightVisualEffect, UnitVisualEffectView.PlayHitEffect, c�
+W004	tools/fx_README.md:179	SUY_LUAN	## Chọn theo ảnh [SUY LUẬN]
+W005	tools/fx_README.md:203	SUY_LUAN	- Noise  [SUY LUẬN] Perlin cải tiến 3D (hàm nhiễu của Unity là mã đóng), mỗi trục một trường lệch nhau, octave/octaveMultiplier/octaveScale, scrollSpeed cuộn theo thời gian hiệu ứng, remap, positionAmount như vận tốc động (không tích vào vận tốc gốc), rotationAmount. Damping  độ mạnh chia tần số [SUY LUẬN  để thu phóng trường mà
+W006	tools/fx_README.md:205	SUY_LUAN	- **Bẫy đã sập  luồng đỉnh tuỳ biến của vệt.** Vật liệu vệt typeA có dissolve đọc `C2.w`; vệt mặc định (Position/Color/UV) cho 0 → `pow(…, 12)` ≈ 0, vệt vô hình. Renderer có `m_UseCustomTrailVertexStreams` + `m_TrailVertexStreams` riêng (lướt Raven  `[0,1,3,4,8,9,34,38]` → Custom1/2 vào TEXCOORD1/2). Nay xuất `tslots`, vệt nhận custom dat
+W007	docs/LOUNGE.md:19	CHUA_RO	- **[CHƯA RÕ]**  không đủ dữ liệu. Có ghi giá trị đang dùng.
+W008	docs/LOUNGE.md:50	SUY_LUAN	- [SUY LUẬN] Sector 9001 đặt ở ô (0, 1), nên z_lua = z_sector + 30. Chứng cứ 
+W009	docs/LOUNGE.md:54	SUY_LUAN	- [SUY LUẬN] Sector 9003 chỉ được nạp khi khu 3 đã mở (`profile.areaOpen(3)`), đặt ở ô (0, 0). Nếu nạp sớm, camera nhìn vào một vùng trống lớn.
+W010	docs/LOUNGE.md:84	SUY_LUAN	- [SUY LUẬN] Mỗi lần vào sảnh, 2 khách vãng lai (NPC có chức năng TycoonCustomer/ArtifactDeal) được sinh ngẫu nhiên tại `GuestSpawnDatas`, khi UserLevel ≥ 2.
+W011	docs/LOUNGE.md:92	SUY_LUAN	     - [SUY LUẬN] Một mục được coi là nhiệm vụ nếu `Type = "Quest"`, hoặc `Purpose` là Start/Complete. Lý do  `AddLoungeDialog` trong Common.lua dùng `Type "Lounge"` cho cả mục giao việc và mục trả việc của 82100.
+W012	docs/LOUNGE.md:96	SUY_LUAN	- Bốt lặn  [SUY LUẬN] là prefab PhoneBooth đặt cạnh NPC 700105 "혼령". Lý do  Lua gọi `PingToNpc(700105)` với chữ "lặn".
+W013	docs/LOUNGE.md:128	SUY_LUAN	Bộ máy LoungeQuest được dựng lại, vì phần C# gốc không có. [SUY LUẬN] Các luật được đoán từ cách Lua gọi API 
+W014	docs/LOUNGE.md:169	SUY_LUAN	  - [SUY LUẬN] Bề rộng nở ×1,5 khi đoạn nằm ngang với camera (`_widthPerspectiveScale`); phần này của GenerateMesh chưa đọc hết.
+W015	docs/LOUNGE.md:185	SUY_LUAN	- [SUY LUẬN] Một campaign chơi được ở bản web khi mọi FixedSectors có art, và nếu bản đồ còn ô trống thì có sector cùng ThemeType để lấp.
+W016	docs/LOUNGE.md:186	CHUA_RO	- [CHƯA RÕ] LocalizedText không có nhãn nhóm campaign, nên nhãn tự đặt  "Hướng dẫn", "Cốt truyện", "Thường".
+W017	docs/LOUNGE.md:188	SUY_LUAN	- [SUY LUẬN] Nhân vật khác 100001 mở sau khi qua 1100.
+W018	docs/LOUNGE.md:199	SUY_LUAN	  - [SUY LUẬN] Mỗi món được tung `AppearProbability` lại sau mỗi chuyến lặn. Số lượng giới hạn theo `StockCount`.
+W019	docs/LOUNGE.md:202	CHUA_RO	- Đổi xu (CoinExchange)  [CHƯA RÕ] đang dùng tỉ lệ Item 10001 ↔ Coin là 1 1.
+W020	docs/LOUNGE.md:204	SUY_LUAN	  - [SUY LUẬN] Phí = `RestCost` (400) × `RestCostMultiplier` (2,5)^n, với n là số lần nghỉ kể từ chuyến lặn trước.
+W021	docs/LOUNGE.md:210	CHUA_RO	  - [CHƯA RÕ] Các hiệu ứng InventorySlotCount, SafeInventorySlotCount, RecoveryItemCount, LightFuelEfficiency và ShopProductGradeAppearBonus đã lưu nhưng lớp lặn chưa áp dụng.
+W022	docs/LOUNGE.md:214	SUY_LUAN	- DangerLevel  [SUY LUẬN] đặt độ khó mặc định cho chuyến lặn sau.
+W023	docs/LOUNGE.md:233	SUY_LUAN	[SUY LUẬN] Công thức giá 
+W024	docs/LOUNGE.md:265	CHUA_RO	- [CHƯA RÕ] Loadout mặc định của nhân vật mới do server gốc cấp. Bản web lấy `stage.defaultLoadout`  RMB = ActiveSkillIds[0], Q = [1]. Hai ô này khớp ảnh sảnh (Noah  khiên, đá nổ) và ảnh bảng nhân vật (Gayoung  Xung Phong, Bùa Trấn Áp). Ô E/R ẩn giữ skill mặc định cho tới khi mở ô.
+W025	docs/SKILLVM.md:9	CHUA_RO	- **[CHƯA RÕ]**  không đủ dữ liệu. Mục §8 ghi giá trị mặc định đang dùng.
+W026	docs/SKILLVM.md:79	CHUA_RO	- **Luật dùng ** `executeTime` của node bị bỏ qua. [SUY LUẬN] Riêng các node "lướt + chém" có `None@0.18` thì xem [CHƯA RÕ] #1.
+W027	docs/SKILLVM.md:109	SUY_LUAN	| StateChangeSkillTrigger | `States[]`, `Exclude` | chủ **đi vào** một trạng thái trong danh sách từ trạng thái ngoài danh sách. Trạng thái  Idle, Move, Skill, CrowdControlled, Interact, Cutscene. [SUY LUẬN] |
+W028	docs/SKILLVM.md:137	SUY_LUAN	- `AtkSpeed` nhân tốc độ thời gian của skill có tag `BasicAttack`. [SUY LUẬN] Số gốc AtkSpeed = 1 nên không ảnh hưởng số kiểm.
+W029	docs/SKILLVM.md:142	SUY_LUAN	- **MoveByInputNoAim**  đi bộ tự do theo phím ở `MoveSpeed` hiện tại (buff chậm như 1024 −15% vẫn áp), hướng ngắm bị khoá. Trong cửa sổ `[moveStartTime, moveEndTime]`, nếu `moveSpeed > 0` thì thay đi bộ bằng một cú lướt theo phím, tốc độ `moveSpeed × curve`. Không bấm hướng thì không lướt. [SUY LUẬN]
+W030	docs/SKILLVM.md:145	SUY_LUAN	- **MoveToMoveDir**  lướt theo phím di chuyển lúc vào node. Không bấm hướng thì theo hướng ngắm. [SUY LUẬN]
+W031	docs/SKILLVM.md:148	SUY_LUAN	  - `moveOffset = −1` ở cả 4 node MoveToTarget có trong dữ liệu. Xem là giá trị trống  dừng khi chạm (tổng bán kính). [SUY LUẬN] Nếu hiểu là "dừng cách 1 m" thì thân lao Gayoung (Sphere 1.2) chạm không tới.
+W032	docs/SKILLVM.md:154	SUY_LUAN	- `Distance`  giữ tổng quãng `moveSpeed × (end − start)`, đường cong chỉ phân bổ tốc độ. Với quái lao theo hướng ngắm thì không vượt quá mép mục tiêu. [SUY LUẬN] Chỉ quái dùng kiểu này.
+W033	docs/SKILLVM.md:211	SUY_LUAN	Bán kính mục tiêu được cộng vào hai trục, xấp xỉ va chạm capsule. [SUY LUẬN] Bán kính đơn vị không có trong bảng. ASSETS.md §1.3 đo được capsule nhân vật 0.18, zombie 0.2, boss 0.95. Test dùng 0.3.
+W034	docs/SKILLVM.md:213	SUY_LUAN	Quạt bị scale không đều (Noah  60° với x ≠ z) thì góc được đo trong không gian đã chuẩn hoá, tức góc của lưới mesh. [SUY LUẬN]
+W035	docs/SKILLVM.md:235	SUY_LUAN	| FollowSelf (190) | dính theo chân chủ, giữ độ lệch. Hướng giữ nguyên như lúc sinh [SUY LUẬN] |
+W036	docs/SKILLVM.md:236	SUY_LUAN	| TraceOwner (2) | có `moveSpeed`  bay về chủ ở `moveSpeed × curve(t/duration)`, hướng quay về chủ, tới nơi thì huỷ (sinh `destroyHitBoxId`). Không có `moveSpeed`  như FollowSelf. [SUY LUẬN] Chỉ 2 dòng, đều là lượt về của bumerang Mio (100112003/…13, curve 0→1). Bẫy đã sập  coi như FollowSelf thì bumerang bay mãi không về |
+W037	docs/SKILLVM.md:304	SUY_LUAN	- **Pull**  kéo về phía nguồn tới khi chạm. [SUY LUẬN]
+W038	docs/SKILLVM.md:318	SUY_LUAN	- **Thêm**  cộng stack, kẹp `MaxStackCount`, đặt lại thời lượng. `ExpirePerStack`  mỗi stack có đồng hồ riêng. [SUY LUẬN]
+W039	docs/SKILLVM.md:325	SUY_LUAN	- **Tick**  hiệu ứng Dot* chạy mỗi 1 s, tick đầu sau 1 s. [SUY LUẬN] Bleed 1017 8 s ra 8 tick.
+W040	docs/SKILLVM.md:327	SUY_LUAN	- **DurationOverride.Stats** (buff nạp đạn 1302 của Raven  1.5 s, kẹp 0.7–2.5, theo `AtkSpeedPercent`, BasePercent 120)  `dur = Duration × 100 / (100 + Σ stat × BasePercent/100)`, rồi kẹp. [SUY LUẬN]
+W041	docs/SKILLVM.md:354	SUY_LUAN	| DamageConversion (1) | `ElementalType`, `Percent` | % sát thương nguyên tố đó thành hồi máu [SUY LUẬN] |
+W042	docs/SKILLVM.md:366	SUY_LUAN	- `IsDecrease`  giảm tuyến tính về 0 trong `Duration`. [SUY LUẬN]
+W043	docs/SKILLVM.md:386	SUY_LUAN	Tên cột lấy từ bảng. Cách kết hợp là [SUY LUẬN], trừ chỗ có ghi.
+W044	docs/SKILLVM.md:458	CHUA_RO	| 0.75 | 10010500  CD 5 s. `StaminaCost` 15 nhưng cây không có node `IsUsingCost`, nên không trừ ([CHƯA RÕ] #20). 3000009 (ParryEffect, **0.23 s**), 1025 (+25% Def, −50% stress nhận, miễn nhiều CC). Clip `parrying` |
+W045	docs/SKILLVM.md:557	SUY_LUAN	  - `offset` + `VfxZOffset` là độ lệch cục bộ, quay theo hướng VFX. [SUY LUẬN] ZOffset dọc trục trước  thiên thạch Mio `startOffset z −1.1` + `VfxZOffset 1.1` về đúng tâm.
+W046	docs/SKILLVM.md:558	SUY_LUAN	  - `VfxSpeeds[{endTime, speed}]`  `endTime` là thời gian của hiệu ứng (như animationSpeeds), sau mốc cuối tốc độ 1. [SUY LUẬN] `{1.0  30}` theo giờ thật sẽ vô lý.
+W047	docs/SKILLVM.md:574	CHUA_RO	## 8. [CHƯA RÕ] — mặc định đang dùng
+W048	docs/AI.md:102	SUY_LUAN	- **Né**  mục tiêu vừa ra đòn trong `AvoidRange` → `AvoidStatePercent`% lùi ra trong `AvoidStateDuration` giây. [SUY LUẬN]
+W049	docs/AI.md:196	CHUA_RO	## 10. [CHƯA RÕ] — mặc định đang dùng
+W050	docs/DIVE.md:19	CHUA_RO	- **[CHƯA RÕ]**  không đủ dữ liệu. Có ghi giá trị đang dùng.
+W051	docs/DIVE.md:47	SUY_LUAN	- **[SUY LUẬN] Luật viền.**
+W052	docs/DIVE.md:63	SUY_LUAN	- **[SUY LUẬN] Quái sinh lười.** Quái chỉ được tạo khi người chơi tới gần trong vòng 42 m; trước đó nằm trong danh sách `dormant`.
+W053	docs/DIVE.md:87	SUY_LUAN	- **[SUY LUẬN] Bẫy.**
+W054	docs/DIVE.md:122	SUY_LUAN	  - [SUY LUẬN] Tính theo mỗi 30 % máu tối đa bị mất, cộng dồn.
+W055	docs/DIVE.md:134	SUY_LUAN	  - [SUY LUẬN] Đồ loại Quest chỉ rơi khi có CampaignTask cần nó.
+W056	docs/DIVE.md:150	SUY_LUAN	- **[SUY LUẬN] Nhạc nền.**
+W057	docs/DIVE.md:162	SUY_LUAN	- **[SUY LUẬN] Cắt cảnh (`PlayCutscene`).** Không có dữ liệu Timeline, nên đang giả lập như sau 
+W058	docs/DIVE.md:174	SUY_LUAN	- **[SUY LUẬN] Nhóm Front/Back.** Nhóm được chọn theo hướng prefab so với camera. Khi cần lật thì dùng ma trận đổi x↔z. Cửa bật/tắt nhóm Open/Close.
+W059	docs/DIVE.md:175	SUY_LUAN	- **[SUY LUẬN] Đồ rơi** hiện thành icon gốc (quad 0.6 m) có bóng tròn.
+W060	docs/DIVE.md:180	CHUA_RO	- **[CHƯA RÕ] Skill của vật phẩm dùng được.** Skill 50002xxx/50003xxx không có trong `VD.T.Skill`, nên thuốc/đèn không dùng được; bấm vào chỉ hiện thông báo.
+W061	docs/DIVE.md:181	CHUA_RO	- **[CHƯA RÕ] Thánh địa (ZoneSkillExecutor).** Không có bảng `SkillExecutor.csv`, nên thánh địa ZoneSpawn 3001–3005 bị bỏ qua.
+W062	docs/DIVE.md:182	CHUA_RO	- **[CHƯA RÕ] Không có luật quá tải.**
+W063	docs/DIVE.md:185	CHUA_RO	- **[CHƯA RÕ] Quái tuần tra** (`PatrolMonsterId/Count`) chưa được sinh.
+W064	docs/DIVE.md:186	CHUA_RO	- **[CHƯA RÕ] Các phần khác chưa có **
+W065	docs/DIVE.md:191	SUY_LUAN	- **[SUY LUẬN] Điểm xuất phát.** Nếu không có ZonePoint `PlayerSpawn`, người chơi bắt đầu ở ZonePoint `Outside` xa lối thoát nhất.
+W066	docs/DIVE.md:192	SUY_LUAN	- **[SUY LUẬN] Chìa khoá** bị tiêu hao khi mở cửa.
+W067	docs/DIVE.md:204	SUY_LUAN	  - Cách sửa  xong một tương tác thì phải thả F. Riêng đồ rơi vẫn được giữ F để nhặt liền nhiều món. [SUY LUẬN]
+W068	docs/DIVE.md:264	SUY_LUAN	- **[SUY LUẬN] Ánh sáng.** Shader tên "Lit" nên bảng ăn ánh sáng.
+W069	docs/DIVE.md:310	SUY_LUAN	- **Web [SUY LUẬN] ** dùng lại khung CutscenePanel cho mọi hộp thoại Lua (lặn và sảnh). Giữ Esc (tay cầm  giữ B), hoặc giữ chuột trên
+W070	docs/DIVE.md:341	SUY_LUAN	- **[SUY LUẬN] "Chạy xa" đến từ không biết đi đâu, không phải từ bản đồ.**
+W071	docs/DIVE.md:369	SUY_LUAN	  - [SUY LUẬN] Vùng chết cần 0,125 / 0,925 là mặc định InputSettings của Unity; tệp InputSettings của bản gốc chưa bóc.
+W072	docs/DIVE.md:428	CHUA_RO	    TrackOffset là [SUY LUẬN]. HUD khi cắt cảnh [CHƯA RÕ]  HideCanvas chỉ ẩn canvas popup; web để HUD như cũ.
+W073	docs/DIVE.md:517	SUY_LUAN	- **[SUY LUẬN] Thứ tự enum `EGoodsGradeType`** None=0 … Unique=6 lấy theo thứ tự cột `*Weight` của DropReward.csv; khớp với nhóm tiếng (Elite+Epic cùng "high", Legend+Unique cùng "veryhigh").
+W074	docs/DIVE.md:520	SUY_LUAN	  - [SUY LUẬN] `_interactionSfx` rỗng (mọi rương, cả DropGoods) thì dùng nhóm MasterAudio `LootingCompleted` (hằng `LOOTING_COMPLETED` trong lớp hằng tiếng; giá trị hằng đọc từ fieldDefaultValues). Web phát `LootingCompleted` khi giữ F xong ở rương và khi nhặt đồ rơi (trước đây gọi `ItemPickUp` — clip không tồn tại).
+W075	docs/DIVE.md:526	SUY_LUAN	- **[SUY LUẬN] Bấm trái lên ô túi khi không lục rương = chọn ô (Selected!).** Tay cầm dùng A cầm/đặt (§12.6).
+W076	docs/DIVE.md:606	SUY_LUAN	- **[SUY LUẬN] Định dạng chỉ số ** `<EStatType_X> +v`, thêm `%` nếu tên kết thúc bằng Percent. Không có khoá LocalizedText cho mẫu "이동 속도 +5% 증가" của prefab.
+W077	docs/DIVE.md:607	SUY_LUAN	- **[SUY LUẬN] Giá cổ vật bằng Coin** = `VD.uiDeal.basePrice(g)` (công thức của sảnh, LOUNGE.md §5).
+W078	docs/DIVE.md:608	SUY_LUAN	- **[SUY LUẬN] Thẻ NEW ** món lần đầu vào hồ sơ. Web lưu ở `localStorage voiddiver.archive.v1`; gốc có `IsNewArchiveItem/Equipment`. Tắt khi rê chuột qua.
+W079	docs/DIVE.md:656	SUY_LUAN	- **Buộc Thoát Lặn** hỏi `GiveUpDescription` ("tính là thoát thất bại"), rồi gọi `VD.lua.api.ForceReturnToTitle`. Trong web, lệnh này là `finish('abandon')`  mất đồ như chết, trừ khe an toàn. [SUY LUẬN]
+W080	docs/DIVE.md:721	CHUA_RO	- **[CHƯA RÕ]** `backSelect`, `questMark`, `missionMark`, `subIcon` của ô hàng chưa lần theo.
+W081	docs/DIVE.md:731	SUY_LUAN	  - DeadManBox_03 ghi `InteractionLooting` trần  không có clip trùng tên (có lẽ là tên nhóm MasterAudio), nên dùng `InteractionLooting_Default`. [SUY LUẬN]
+W082	docs/DIVE.md:758	SUY_LUAN	  Hoàn tất  `get_InteractionSfx` = `_interactionSfx` của prefab; rỗng thì web phát `LootingCompleted` như rương. [SUY LUẬN]
+W083	docs/DIVE.md:816	CHUA_RO	- **[CHƯA RÕ]** Chết thì trang bị đang đeo ra sao  chưa đọc được. Web  thoát được thì ghi `profile.equip[nhân vật] = { weapon, sub, acc, art }`;

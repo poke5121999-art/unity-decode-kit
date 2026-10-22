@@ -37,6 +37,22 @@ src = src[: src.rindex("status = GhidraStatusHandler()")]
 exec(compile(src, "il2cpp_ghidra.py", "exec"), globals())
 getSourceFile = lambda: java.io.File(os.path.join(inspector_dir, "il2cpp_ghidra.py"))  # noqa: E731
 
+from ghidra.app.cmd.function import FunctionRenameOption  # noqa: E402
+
+bad_sigs = [0]
+
+
+def set_function_type(self, address, type):
+    # Ghidra 12 dropped the (addr, sig, source, bool, bool) overload the generated script calls.
+    try:
+        sig = CParserUtils.parseSignature(DataTypeManagerService @ None, currentProgram, type)
+        ApplyFunctionSignatureCmd(self._to_address(address), sig, SourceType.USER_DEFINED, False,
+                                  FunctionRenameOption.RENAME_IF_DEFAULT).applyTo(currentProgram, monitor)
+    except Exception:
+        bad_sigs[0] += 1
+
+
+GhidraDisassemblerInterface.set_function_type = set_function_type
 backend = GhidraDisassemblerInterface()
 context = ScriptContext(backend, GhidraStatusHandler())
 backend.on_start()
@@ -70,6 +86,14 @@ def name_only(m):
         createLabel(addr, SymbolUtilities.replaceInvalidChars(label, True), True)
 
 
+# Create every callee before typing game methods: a game function created while its tail-call
+# target is not yet a function swallows the target's body.
+for m in rest:
+    name_only(m)
+log("other methods named")
+for m in meta["constructedGenericMethods"]:
+    name_only(m)
+log("generic instances named")
 for m in game:
     a = int(m["virtualAddress"], 16)
     if a == 0:
@@ -77,13 +101,9 @@ for m in game:
     seen.add(a)
     backend.define_function(a)
     context.define_il_method(m)
-log("game methods typed")
-for m in rest:
-    name_only(m)
-log("other methods named")
-for m in meta["constructedGenericMethods"]:
-    name_only(m)
-log("generic instances named")
+    if len(seen) % 5000 == 0:
+        log(f"typed {len(seen)}")
+log(f"game methods typed, {bad_sigs[0]} signatures failed to parse")
 
 for d in meta["stringLiterals"]:
     context.define_string(d)

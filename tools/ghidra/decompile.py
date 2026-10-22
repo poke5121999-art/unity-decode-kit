@@ -1,5 +1,5 @@
 # Headless PyGhidra script: decompile every method of the game assemblies into one C file per type.
-# Args: <inspector_ghidra_dir> <game_assembly_regex> <out_dir> [workers]
+# Args: <inspector_ghidra_dir> <game_assembly_regex> <out_dir> [workers] [type_regex]
 # Output: <out_dir>/<Assembly>/<Namespace path>/<Type>.c and <out_dir>/methods.tsv
 # (name, .NET signature, address, file, line) so `udk method` can jump straight to a body.
 import json
@@ -16,6 +16,7 @@ from ghidra.util.task import ConsoleTaskMonitor
 args = list(getScriptArgs())
 inspector_dir, game_re, out_dir = args[:3]
 workers = int(args[3]) if len(args) > 3 else 4
+type_re = re.compile(args[4]) if len(args) > 4 else None
 game_re = re.compile(game_re)
 t0 = time.time()
 
@@ -29,6 +30,8 @@ by_type = defaultdict(list)
 for m in meta["methodDefinitions"]:
     group = m.get("group", "")
     if m["virtualAddress"] == "0x0000000000000000" or not game_re.match(group.split("/")[0]):
+        continue
+    if type_re and not type_re.search(group):
         continue
     by_type[group].append(m)
 del meta

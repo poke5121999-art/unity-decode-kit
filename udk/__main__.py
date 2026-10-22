@@ -54,8 +54,14 @@ def methods(root):
 def cmd_method(a):
     root = dump_root(a)
     spec = a.spec
-    rx = re.compile(spec if any(c in spec for c in "^$|*[(\\") else re.escape(spec).replace(r"\.", r"[._]+") + r"\b")
-    hits = [m for m in methods(root) if rx.search(m["c_name"]) or rx.search(m["file"].rsplit("/", 1)[-1][:-2] + "." + m["signature"])]
+    def display(m):
+        return m["file"].rsplit("/", 1)[-1][:-2] + "." + m["signature"].split("(")[0].split()[-1]
+
+    if any(c in spec for c in "^$|*[\\"):
+        rx = re.compile(spec)
+        hits = [m for m in methods(root) if rx.search(display(m))]
+    else:
+        hits = [m for m in methods(root) if spec in display(m)]
     if not hits:
         sys.exit(f"no method matches {spec!r}")
     for m in hits[: a.n]:
@@ -64,7 +70,7 @@ def cmd_method(a):
             lines = fh.read().split("\n")
         i = int(m["line"]) - 1
         j = i + 1
-        while j < len(lines) and not lines[j].startswith("// ") or (j < len(lines) and lines[j].startswith("// ") and "@0x" not in lines[j]):
+        while j < len(lines) and not (lines[j].startswith("// ") and "  @0x" in lines[j]):
             j += 1
         print(f"### code/decomp/{m['file']}:{m['line']}")
         print("\n".join(lines[i:j]).rstrip() + "\n")
@@ -124,7 +130,7 @@ def main():
     p.add_argument("game")
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
-    p.add_argument("--steps", default="inspector,data,ghidra,assets,index")
+    p.add_argument("--steps", default="inspector,assets,data,ghidra,index")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)
