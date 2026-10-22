@@ -95,7 +95,7 @@ def step_inspector(L, out, game_re):
     if how != "plain":
         log(f"metadata repaired: {how}")
         meta = fixed
-    binary = fix_binary(L, d, meta)
+    binary, meta = fix_binary(L, d, meta)
     run([INSPECTOR, "-i", binary, "-m", meta, "-e", "none", "--select-outputs",
          "-c", os.path.join(d, "types.cs"), "-p", os.path.join(d, "il2cpp_ghidra.py"), "-t", "Ghidra",
          "-o", os.path.join(d, "metadata.json"), "-h", os.path.join(d, "cpp")],
@@ -110,18 +110,27 @@ def fix_binary(L, d, meta):
     with open(L["binary"], "rb") as fh:
         b = bytearray(fh.read())
     if b[:4] != b"\x7fELF":
-        return L["binary"]
+        return L["binary"], meta
     windows = elf.unxor_sections(b)
     with open(meta, "rb") as fh:
         m = fh.read()
     import struct
     img_off, img_size = struct.unpack_from("<II", m, 8 + 8 * 20)
     owned = max(sum(struct.unpack_from("<II", m, img_off + i + 8)) for i in range(0, img_size, 40))
-    neutral = elf.neutralize_types(b, owned)
+    n_params = struct.unpack_from("<I", m, 8 + 8 * 12 + 4)[0] // 16  # genericParameters, 16 bytes each in v24
+    neutral = elf.neutralize_types(b, owned, n_params)
     if neutral:
-        neutral = neutral + (elf.restore_typedef_types(b, int(neutral[0], 16), m),)
+        reg_meta = int(neutral[0], 16)
+        neutral = neutral + (elf.restore_typedef_types(b, reg_meta, m),
+                             elf.fix_enums_and_generic_args(b, reg_meta, m, n_params))
+        m, unset = elf.drop_corrupt_defaults(m, b, reg_meta)
+        if unset:
+            meta = os.path.join(d, "global-metadata.dat")  # never write into the game folder
+            with open(meta, "wb") as fh:
+                fh.write(m)
+        log(f"default values with unreadable types retyped as Int32: {unset}")
     if not windows and not (neutral and neutral[2]):
-        return L["binary"]
+        return L["binary"], meta
     fixed = os.path.join(d, os.path.basename(L["binary"]))
     with open(fixed, "wb") as fh:
         fh.write(b)
@@ -129,13 +138,14 @@ def fix_binary(L, d, meta):
     with open(fixed, "rb") as fh:
         b = bytearray(fh.read())
     reg = elf.find_code_registration(b)
+    invokers = elf.clamp_invoker_indices(b, reg[1], reg[0], reg[2]) if reg else 0
     names = elf.repair_module_names(b, reg[1], reg[0], m) if reg else []
     with open(fixed, "wb") as fh:
         fh.write(b)
-    log(f"module names repaired: {names}")
+    log(f"module names repaired: {names}; invoker indices cleared: {invokers}")
     log(f"binary repaired: xor windows {windows}; registration/types/neutralized {neutral}; null segments {dropped}")
     L["binary"] = fixed
-    return fixed
+    return fixed, meta
 
 
 def literals(out):

@@ -138,24 +138,38 @@ def encrypted_ranges(b, cell=4096, threshold=7.8):
                 out.append([o, o + cell])
     return out
 CLASS_KINDS, PARAM_KINDS, POINTER_KINDS = {0x11, 0x12}, {0x13, 0x1E}, {0x0F, 0x14, 0x15, 0x1D}
+TYPE_KINDS = set(range(0x01, 0x17)) | {0x18, 0x19, 0x1B, 0x1C, 0x1D, 0x1E}  # Il2CppTypeEnum values a types[] entry can hold
 
 
-def type_ok(data, bits, n_typedefs, file_size):
+def type_ok(data, bits, n_typedefs, file_size, b=None, n_params=1 << 20, depth=0):
     """An Il2CppType (pre-27.2 bitfield) whose kind and data agree: class/valuetype name a typedef,
-    VAR/MVAR a generic parameter, PTR/ARRAY/GENERICINST/SZARRAY point inside the file."""
+    VAR/MVAR a generic parameter, PTR/SZARRAY point at a sound type, GENERICINST at a generic class
+    naming a typedef, ARRAY inside the file. With b given, pointed-to structures are checked too."""
     kind, mods = (bits >> 16) & 0xFF, (bits >> 24) & 0x3F
-    if mods > 31 or kind > 0x55:
+    if mods > 31 or kind not in TYPE_KINDS:
         return False
     if kind in CLASS_KINDS:
         return data < n_typedefs
     if kind in PARAM_KINDS:
-        return data < 1 << 20
+        return data < n_params
     if kind in POINTER_KINDS:
-        return 0 < data < file_size
+        if not 0 < data < file_size - 16:
+            return False
+        if b is None or depth > 4:
+            return True
+        if kind in (0x0F, 0x1D):  # PTR, SZARRAY -> element Il2CppType
+            d2, b2 = struct.unpack_from("<II", b, data)
+            return type_ok(d2, b2, n_typedefs, file_size, b, n_params, depth + 1)
+        if kind == 0x15:  # GENERICINST -> Il2CppGenericClass { typeDefinitionIndex, context... }
+            tdi, class_inst = struct.unpack_from("<iI", b, data)
+            if not (-1 <= tdi < n_typedefs and 0 < class_inst < file_size - 8):
+                return False
+            argc, argv = struct.unpack_from("<II", b, class_inst)
+            return 0 < argc < 64 and 0 < argv < file_size - 4 * argc
     return True
 
 
-def neutralize_types(b, n_typedefs):
+def neutralize_types(b, n_typedefs, n_params=1 << 20):
     """Find MetadataRegistration (fieldOffsetsCount == typeDefinitionsSizesCount == n_typedefs, two
     words apart, 32-bit layout) and replace Il2CppType entries that are still unreadable (encrypted
     at rest) with a plain `object` type, so static tools can read every other type. Returns
@@ -173,7 +187,7 @@ def neutralize_types(b, n_typedefs):
                     if not 0 < p < len(b) - 8:
                         continue
                     data, bits = struct.unpack_from("<II", b, p)
-                    if not type_ok(data, bits, n_typedefs, len(b)) or any(lo <= p < hi for lo, hi in hot):
+                    if not type_ok(data, bits, n_typedefs, len(b), b, n_params) or any(lo <= p < hi for lo, hi in hot):
                         struct.pack_into("<II", b, p, 0, IL2CPP_TYPE_OBJECT << 16)
                         CORRUPT.add(p)
                         bad += 1
@@ -262,7 +276,7 @@ def append_segment(b, data, align=0x1000):
 def repair_module_names(b, code_reg_modules, n_modules, meta, typedef_size=92):
     """Point every Il2CppCodeGenModule at its real assembly name. Protected builds scramble some name
     pointers; a module is matched to its image by method count (unique except for empty modules,
-    whose order does not matter). Names missing from the binary go into an appended segment."""
+    whose order does not matter). Repaired names go into an appended segment."""
     so = struct.unpack_from("<I", meta, 8 + 16)[0]
     io, isz = struct.unpack_from("<II", meta, 8 + 8 * 20)
     to = struct.unpack_from("<I", meta, 8 + 8 * 19)[0]
@@ -292,12 +306,10 @@ def repair_module_names(b, code_reg_modules, n_modules, meta, typedef_size=92):
             continue
         name = cands[0]
         del free[name]
-        hit = bytes(b).find(name + b"\0")
-        if hit < 0:
-            places[a] = len(blob)
-            blob += name + b"\0"
-        else:
-            struct.pack_into("<I", b, a, hit)
+        # Always write a fresh copy: a matching string found elsewhere can sit in a region another
+        # repair rewrites (Zing Speed stores some inside a corrupted invoker index array).
+        places[a] = len(blob)
+        blob += name + b"\0"
         fixes.append(name.decode())
     if blob:
         base = append_segment(b, bytes(blob))
@@ -329,6 +341,88 @@ def find_code_registration(b):
     while ref >= 0:
         count = struct.unpack_from("<I", raw, ref - 4)[0]
         if 0 < count < 4096:
-            return count, start
+            return count, start, ref - 4 - 60  # v24.5: 15 words precede codeGenModulesCount
         ref = raw.find(struct.pack("<I", start), ref + 1)
     return None
+
+
+def clamp_invoker_indices(b, modules, n_modules, code_reg):
+    """Set per-method invoker indices outside invokerPointers to -1 (no invoker). Encrypted windows
+    leave garbage there, and readers index an array with it. Returns how many were cleared."""
+    inv_count = struct.unpack_from("<I", b, code_reg + 20)[0]
+    cleared = 0
+    for a in struct.unpack_from(f"<{n_modules}I", b, modules):
+        count, inv = struct.unpack_from("<I", b, a + 4)[0], struct.unpack_from("<I", b, a + 20)[0]
+        if not 0 < inv < len(b) - 4 * count:
+            continue
+        for k in range(count):
+            if not -1 <= struct.unpack_from("<i", b, inv + 4 * k)[0] < inv_count:
+                struct.pack_into("<i", b, inv + 4 * k, -1)
+                cleared += 1
+    return cleared
+
+
+def _typedefs(meta, typedef_size=92):
+    td_off, td_size = struct.unpack_from("<II", meta, 8 + 8 * 19)
+    so = struct.unpack_from("<I", meta, 8 + 16)[0]
+
+    def field(k, i):
+        return struct.unpack_from("<i", meta, td_off + typedef_size * k + 4 * i)[0]
+
+    def text(i):
+        return meta[so + i:meta.index(b"\0", so + i)]
+
+    return td_size // typedef_size, field, text
+
+
+def fix_enums_and_generic_args(b, reg, meta, n_params):
+    """Second pass after neutralize_types. An enum whose underlying type is unreadable or not an integer gets I4
+    (enums need a primitive underlying type); a generic argument pointing at an unsound type is
+    pointed at System.Object's real Il2CppType. Returns (enums fixed, arguments fixed)."""
+    n, field, text = _typedefs(meta)
+    types_count, types_ptr = struct.unpack_from("<II", b, reg + 24)
+    ptrs = struct.unpack_from(f"<{types_count}I", b, types_ptr)
+    by_byval = {field(k, 2): k for k in range(n)}
+    obj = next((ptrs[field(k, 2)] for k in range(n) if text(field(k, 0)) == b"Object" and text(field(k, 1)) == b"System"), None)
+    enums = 0
+    for k in range(n):
+        parent = by_byval.get(field(k, 5))
+        if parent is None or text(field(parent, 0)) != b"Enum" or text(field(parent, 1)) != b"System":
+            continue
+        t = field(k, 6)  # elementTypeIndex: an enum's underlying type
+        if 0 <= t < types_count and (ptrs[t] in CORRUPT or (struct.unpack_from("<I", b, ptrs[t] + 4)[0] >> 16) & 0xFF
+                                     not in range(0x02, 0x0C)):
+            struct.pack_into("<II", b, ptrs[t], 0, 0x08 << 16)  # IL2CPP_TYPE_I4
+            enums += 1
+    args = 0
+    inst_count, inst_ptr = struct.unpack_from("<II", b, reg + 8)
+    if obj:
+        for inst in struct.unpack_from(f"<{inst_count}I", b, inst_ptr):
+            argc, argv = struct.unpack_from("<II", b, inst)
+            for j in range(argc):
+                a = struct.unpack_from("<I", b, argv + 4 * j)[0]
+                ok = 0 < a < len(b) - 8 and a not in CORRUPT and type_ok(*struct.unpack_from("<II", b, a), n, len(b), b, n_params)
+                if not ok:
+                    struct.pack_into("<I", b, argv + 4 * j, obj)
+                    args += 1
+    return enums, args
+
+
+def drop_corrupt_defaults(meta, b, reg):
+    """In the metadata, retype default values whose type is an unreadable binary type as System.Int32
+    (slots 6/7: parameter/field defaults in v24). Readers expect every enum default to carry an
+    integer; unsetting the value instead makes them fail. Returns the patched metadata and a count."""
+    m = bytearray(meta)
+    n, field, text = _typedefs(meta)
+    int32 = next((field(k, 2) for k in range(n) if text(field(k, 0)) == b"Int32" and text(field(k, 1)) == b"System"), None)
+    types_count, types_ptr = struct.unpack_from("<II", b, reg + 24)
+    ptrs = struct.unpack_from(f"<{types_count}I", b, types_ptr)
+    changed = 0
+    for slot in (6, 7):
+        off, size = struct.unpack_from("<II", m, 8 + 8 * slot)
+        for e in range(off, off + size, 12):
+            t = struct.unpack_from("<i", m, e + 4)[0]
+            if int32 is not None and 0 <= t < types_count and ptrs[t] in CORRUPT:
+                struct.pack_into("<i", m, e + 4, int32)
+                changed += 1
+    return bytes(m), changed
