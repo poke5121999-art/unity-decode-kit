@@ -20,7 +20,18 @@ def post(port, route, timeout, **form):
         return r.status
 
 
-def export(binary, game_data_dir, out_dir, log_dir, timeout=4 * 3600):
+# Group assets by bundle (paths stay meaningful) and decompile scripts to stubs, so every
+# MonoBehaviour's m_Script points at a .cs whose name is the class.
+SETTINGS = {
+    "BundledAssetsExportMode": "GroupByBundleName",
+    "ScriptExportMode": "Decompiled",
+    "ScriptContentLevel": "Level2",
+    "ShaderExportMode": "Dummy",
+    "TextExportMode": "Parse",
+}
+
+
+def export(binary, game_data_dir, out_dir, log_dir, timeout=4 * 3600, target_version=None):
     """AssetRipper writes <out_dir>/ExportedProject (Assets/, ProjectSettings/) and AuxiliaryFiles.
     It empties out_dir first, so its own log goes to log_dir."""
     os.makedirs(log_dir, exist_ok=True)
@@ -37,6 +48,8 @@ def export(binary, game_data_dir, out_dir, log_dir, timeout=4 * 3600):
                 time.sleep(1)
         else:
             raise RuntimeError(f"AssetRipper did not start; see {logf}")
+        settings = dict(SETTINGS, **({"TargetVersion": target_version} if target_version else {}))
+        post(port, "/Settings/Update", 60, **settings)
         t = time.time()
         post(port, "/LoadFolder", timeout, path=game_data_dir)
         print(f"[assetripper] loaded in {time.time() - t:.0f}s", flush=True)
@@ -53,4 +66,4 @@ def export(binary, game_data_dir, out_dir, log_dir, timeout=4 * 3600):
 
 if __name__ == "__main__":
     import sys
-    export(*sys.argv[1:5])
+    export(*sys.argv[1:5], target_version=sys.argv[5] if len(sys.argv) > 5 else None)

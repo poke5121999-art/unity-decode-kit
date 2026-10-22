@@ -95,12 +95,47 @@ def step_inspector(L, out, game_re):
     if how != "plain":
         log(f"metadata repaired: {how}")
         meta = fixed
-    run([INSPECTOR, "-i", L["binary"], "-m", meta, "-e", "none", "--select-outputs",
+    binary = fix_binary(L, d, meta)
+    run([INSPECTOR, "-i", binary, "-m", meta, "-e", "none", "--select-outputs",
          "-c", os.path.join(d, "types.cs"), "-p", os.path.join(d, "il2cpp_ghidra.py"), "-t", "Ghidra",
          "-o", os.path.join(d, "metadata.json"), "-h", os.path.join(d, "cpp")],
         1800, os.path.join(d, "log.txt"), min_free_gb=7)
     os.makedirs(os.path.join(out, "code"), exist_ok=True)
     shutil.copy(os.path.join(d, "types.cs"), os.path.join(out, "code", "types.cs"))
+
+
+def fix_binary(L, d, meta):
+    """Undo at-rest protection of an ELF libil2cpp.so (see udk/elf.py); later steps use the copy."""
+    from udk import elf
+    with open(L["binary"], "rb") as fh:
+        b = bytearray(fh.read())
+    if b[:4] != b"\x7fELF":
+        return L["binary"]
+    windows = elf.unxor_sections(b)
+    with open(meta, "rb") as fh:
+        m = fh.read()
+    import struct
+    img_off, img_size = struct.unpack_from("<II", m, 8 + 8 * 20)
+    owned = max(sum(struct.unpack_from("<II", m, img_off + i + 8)) for i in range(0, img_size, 40))
+    neutral = elf.neutralize_types(b, owned)
+    if neutral:
+        neutral = neutral + (elf.restore_typedef_types(b, int(neutral[0], 16), m),)
+    if not windows and not (neutral and neutral[2]):
+        return L["binary"]
+    fixed = os.path.join(d, os.path.basename(L["binary"]))
+    with open(fixed, "wb") as fh:
+        fh.write(b)
+    dropped = elf.sanitize(fixed, fixed)
+    with open(fixed, "rb") as fh:
+        b = bytearray(fh.read())
+    reg = elf.find_code_registration(b)
+    names = elf.repair_module_names(b, reg[1], reg[0], m) if reg else []
+    with open(fixed, "wb") as fh:
+        fh.write(b)
+    log(f"module names repaired: {names}")
+    log(f"binary repaired: xor windows {windows}; registration/types/neutralized {neutral}; null segments {dropped}")
+    L["binary"] = fixed
+    return fixed
 
 
 def literals(out):
