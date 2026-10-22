@@ -82,8 +82,9 @@ USAGE_LISTS, USAGE_PAIRS = 22, 23  # header slots in metadata v24 (the table is 
 
 
 def clamp_usage_lists(b, pairs):
-    """Empty metadataUsageLists entries whose range runs past metadataUsagePairs. Protected builds
-    plant such an entry to crash dumpers; the runtime never reads it."""
+    """Drop metadataUsageLists entries whose range runs past metadataUsagePairs. Protected builds
+    append such an entry to break dumpers that compare the list count with the binary's
+    MetadataRegistration; a bad entry at the tail is cut, one in the middle is emptied."""
     lo, size = pairs[USAGE_LISTS]
     n_pairs = pairs[USAGE_PAIRS][1] // 8
     fixed = 0
@@ -92,7 +93,51 @@ def clamp_usage_lists(b, pairs):
         if start + count > n_pairs:
             struct.pack_into("<II", b, off, 0, 0)
             fixed += 1
+    while size and struct.unpack_from("<II", b, lo + size - 8) == (0, 0) and fixed:
+        size -= 8
+    _set_size(b, USAGE_LISTS, size)
     return fixed
+
+
+TYPEDEF_SIZE = {24: 92}  # bytes per Il2CppTypeDefinition, by metadata version (v24.1+)
+TYPE_DEFS, IMAGES, IMAGE_SIZE = 19, 20, 40
+
+
+def trim_orphan_types(b, pairs, version):
+    """Cut type definitions that no image owns. Protected builds append a fake one so the count no
+    longer equals the binary's fieldOffsetsCount, which is how dumpers find MetadataRegistration."""
+    size = TYPEDEF_SIZE.get(version)
+    if not size:
+        return 0
+    img_off, img_size = pairs[IMAGES]
+    owned = max((struct.unpack_from("<II", b, img_off + i + 8)[0] + struct.unpack_from("<II", b, img_off + i + 8)[1]
+                 for i in range(0, img_size, IMAGE_SIZE)), default=0)
+    have = pairs[TYPE_DEFS][1] // size
+    if 0 < owned < have:
+        _set_size(b, TYPE_DEFS, owned * size)
+        return have - owned
+    return 0
+
+
+def _set_size(b, slot, size):
+    struct.pack_into("<I", b, 8 + 8 * slot + 4, size)
+
+
+def blank_bad_literals(b, pairs):
+    """Literal table entries whose (length, offset) run past the literal data are unreadable (Zing
+    Speed encrypts 16 KB of the first block at rest). Make them empty strings at the end of the last
+    good literal, so every other table still parses; their text stays in the literal data."""
+    tab_off, tab_size = pairs[0]
+    data_size = pairs[1][1]
+    blanked, last_end = 0, 0
+    for off in range(tab_off, tab_off + tab_size, 8):
+        n, a = struct.unpack_from("<II", b, off)
+        if a + n > data_size:
+            struct.pack_into("<II", b, off, 0, last_end)
+            blanked += 1
+        else:
+            last_end = a + n
+    return blanked
 
 
 def repair(src, dst, game_dir):
@@ -125,10 +170,14 @@ def repair(src, dst, game_dir):
     version = metadata_version(unity)
     struct.pack_into("<Ii", b, 0, MAGIC, version)
     trapped = clamp_usage_lists(b, pairs) if version < 27 else 0
+    orphans = trim_orphan_types(b, pairs, version)
+    lost = blank_bad_literals(b, pairs)
     with open(dst, "wb") as fh:
         fh.write(b)
     return (f"header xor 0x{key:02X}; blocks xor'd: {xored}; magic restored; version {version} (Unity {unity}); "
-            f"{trapped} usage list entries pointed past the pairs table and were emptied")
+            f"{trapped} usage list entries pointed past the pairs table and were dropped; "
+            f"{orphans} type definitions owned by no image were cut; "
+            f"{lost} string literal entries unreadable (encrypted at rest) and blanked")
 
 
 def literals(path):
