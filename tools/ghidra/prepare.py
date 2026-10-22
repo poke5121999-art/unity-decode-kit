@@ -53,6 +53,15 @@ def set_function_type(self, address, type):
 
 
 GhidraDisassemblerInterface.set_function_type = set_function_type
+_add_to_group = GhidraDisassemblerInterface.add_function_to_group
+
+
+def add_function_to_group(self, address, group):
+    # Assembly names may hold spaces ("SteamNetworkingSockets Transport for ....dll").
+    _add_to_group(self, address, "/".join(SymbolUtilities.replaceInvalidChars(p, True) for p in group.split("/")))
+
+
+GhidraDisassemblerInterface.add_function_to_group = add_function_to_group
 backend = GhidraDisassemblerInterface()
 context = ScriptContext(backend, GhidraStatusHandler())
 backend.on_start()
@@ -94,15 +103,15 @@ log("other methods named")
 for m in meta["constructedGenericMethods"]:
     name_only(m)
 log("generic instances named")
-for m in game:
+for i, m in enumerate(game, 1):
     a = int(m["virtualAddress"], 16)
     if a == 0:
         continue
     seen.add(a)
     backend.define_function(a)
     context.define_il_method(m)
-    if len(seen) % 5000 == 0:
-        log(f"typed {len(seen)}")
+    if i % 5000 == 0:
+        log(f"typed {i}/{len(game)}")
 log(f"game methods typed, {bad_sigs[0]} signatures failed to parse")
 
 for d in meta["stringLiterals"]:

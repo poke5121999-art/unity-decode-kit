@@ -4,6 +4,7 @@
   udk method <Type.Method | regex>                    print decompiled bodies
   udk type <Type>                                     print the type with fields, offsets, defaults
   udk refs <asset path or name regex>                 what an asset uses and what uses it
+  udk trace <method regex>... -o trace.js [--log f]   Frida script logging calls + receiver fields
   udk build <game dir> <out dir> [--game-re RE]       run the whole pipeline (see udk/build.py)
 
 The dump root comes from --dump or $UDK_DUMP (default: out/vd under the kit).
@@ -101,6 +102,12 @@ def cmd_refs(a):
     assets.print_refs(dump_root(a), a.spec, a.n)
 
 
+def cmd_trace(a):
+    from udk import runtime
+    hooks, cfg = runtime.generate(dump_root(a), a.patterns, a.o, a.log, winabi=not a.sysv)
+    print(f"{len(hooks)} hooks -> {a.o}; gadget config {cfg}")
+
+
 def cmd_build(a):
     from udk import build
     build.main(a.game, a.out, a.game_re, a.steps)
@@ -126,6 +133,12 @@ def main():
     p.add_argument("spec")
     p.add_argument("-n", type=int, default=40)
     p.set_defaults(fn=cmd_refs)
+    p = sub.add_parser("trace")
+    p.add_argument("patterns", nargs="+")
+    p.add_argument("-o", default="trace.js")
+    p.add_argument("--log", help="write JSONL here instead of send() to the frida CLI")
+    p.add_argument("--sysv", action="store_true", help="native Linux/Android binary (this in rdi/r0)")
+    p.set_defaults(fn=cmd_trace)
     p = sub.add_parser("build")
     p.add_argument("game")
     p.add_argument("out")

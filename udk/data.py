@@ -181,7 +181,7 @@ def peel(b, ring=None, depth=0):
     return b, [], "binary"
 
 
-SKIP_DIRS = {"aa", "StandaloneWindows64", "Android", "iOS"}
+SKIP_DIRS = {"aa", "StandaloneWindows64", "Android", "iOS", "bin", "AssetBundles"}
 TEXT_EXT = ("csv", "lua", "json", "xml", "tsv", "txt", "png", "jpg", "ogg")
 
 
