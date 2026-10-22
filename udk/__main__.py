@@ -11,6 +11,7 @@ The dump root comes from --dump or $UDK_DUMP (default: out/vd under the kit).
 """
 import argparse
 import csv
+import json
 import os
 import re
 import subprocess
@@ -25,6 +26,7 @@ KINDS = {
     "assets": "assets/ExportedProject/Assets",
     "audio": "audio",
     "shaders": "shaders",
+    "settings": "settings",
 }
 csv.field_size_limit(1 << 30)
 
@@ -81,6 +83,76 @@ def cmd_method(a):
         print(f"... {len(hits) - a.n} more; raise -n")
 
 
+def cmd_callers(a):
+    """Methods that call Type.Method (or a property's get_/set_), or touch the field Type.field."""
+    root = dump_root(a)
+    typ, _, member = a.spec.rpartition(".")
+    if not typ or not member:
+        sys.exit("give Type.Method or Type.field")
+    t = typ.replace(".", "_")
+    own = {m["signature"].split("(")[0].split()[-1] for m in methods(root) if m["c_name"].startswith(t + "_")}
+    names = [n for n in (member, "get_" + member, "set_" + member) if n in own]
+    short = re.escape(typ.split(".")[-1])
+    if not own:  # engine or library type: only its callers were decompiled, so try both shapes
+        names, field = [member], member
+    elif member in own:
+        field = None
+    else:  # field, or auto-property whose getter IL2CPP inlined into a backing-field read
+        field = f"_{member}_k__BackingField" if names else member
+    rxs = [rf"(\w+)->fields\)\.{re.escape(field)}\b|static_fields->{re.escape(field)}\b"] if field else []
+    if names:
+        rxs.append(rf"(?<![A-Za-z0-9]){re.escape(t)}__({'|'.join(map(re.escape, names))})(?!_b__\d)(_\w*)?\b")
+    out = []
+    for rx in rxs:
+        out += subprocess.run([RG, "-n", "-P", rx, os.path.join(root, "code", "decomp")],
+                              capture_output=True, text=True).stdout.splitlines()
+    by_method, cache = {}, {}
+    for line in out:
+        path, no, text = line.split(":", 2)
+        if path not in cache:
+            with open(path, encoding="utf-8") as fh:
+                cache[path] = fh.read().split("\n")
+        lines = cache[path]
+        no = int(no)
+        k = max((i for i, h in enumerate(lines[:no]) if h.startswith("// ") and "  @0x" in h), default=0)
+        caller = lines[k][3:].split("  @0x")[0]
+        var = field and re.search(rf"(\w+)->fields\)\.{re.escape(field)}\b", text)
+        if not var and (k == no - 1 or k + 1 < no <= k + 6 and "::" in text):
+            continue  # the method's own header or definition line
+        if var:
+            body = "\n".join(lines[k:no])
+            if var and not re.search(rf"\b{short}\s*\*\s*{re.escape(var.group(1))}\b", body):
+                continue  # same field name on another type
+        by_method.setdefault((os.path.relpath(path, root), k + 1, caller), []).append(text.strip())
+    kind = "calls or backing-field uses" if names else "field uses"
+    print(f"{len(by_method)} methods with {kind} of {a.spec}")
+    for (path, line, caller), texts in list(by_method.items())[: a.n]:
+        print(f"### {path}:{line}  {caller}")
+        for t_ in texts[:3]:
+            print("    " + t_[:200])
+    if len(by_method) > a.n:
+        print(f"... {len(by_method) - a.n} more; raise -n")
+
+
+def cmd_settings(a):
+    root = dump_root(a)
+    path = os.path.join(root, "settings", a.name + ".json")
+    if not os.path.exists(path):
+        names = sorted(f[:-5] for f in os.listdir(os.path.join(root, "settings")))
+        sys.exit(f"no settings object {a.name!r}; have: {', '.join(names)}")
+    with open(path, encoding="utf-8") as fh:
+        tree = json.load(fh)
+    rx = re.compile(a.field or ".", re.I)
+    for k, v in tree.items():
+        if rx.search(k):
+            print(f"{k} = {json.dumps(v, ensure_ascii=False)[:300]}")
+
+
+def cmd_prefab(a):
+    from udk import prefab
+    prefab.print_prefab(dump_root(a), a.spec, a.n, a.v)
+
+
 def cmd_type(a):
     root = dump_root(a)
     rx = re.compile(r"^(public|internal|private|protected)?[\w ]*\b(class|struct|enum|interface) " + re.escape(a.name) + r"\b")
@@ -128,6 +200,19 @@ def main():
     p.add_argument("spec")
     p.add_argument("-n", type=int, default=5)
     p.set_defaults(fn=cmd_method)
+    p = sub.add_parser("callers")
+    p.add_argument("spec", help="Type.Method or Type.field")
+    p.add_argument("-n", type=int, default=30)
+    p.set_defaults(fn=cmd_callers)
+    p = sub.add_parser("settings")
+    p.add_argument("name", help="PlayerSettings, QualitySettings, TagManager, ...")
+    p.add_argument("field", nargs="?", help="regex over top-level field names")
+    p.set_defaults(fn=cmd_settings)
+    p = sub.add_parser("prefab")
+    p.add_argument("spec", help="regex over prefab/scene paths")
+    p.add_argument("-n", type=int, default=1)
+    p.add_argument("-v", action="store_true", help="also print short scalar fields")
+    p.set_defaults(fn=cmd_prefab)
     p = sub.add_parser("type")
     p.add_argument("name")
     p.set_defaults(fn=cmd_type)
@@ -145,7 +230,7 @@ def main():
     p.add_argument("game")
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
-    p.add_argument("--steps", default="inspector,assets,data,audio,shaders,ghidra,index")
+    p.add_argument("--steps", default="inspector,settings,assets,data,audio,shaders,ghidra,index")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)

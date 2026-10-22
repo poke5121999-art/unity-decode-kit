@@ -1,0 +1,42 @@
+id	verdict	evidence
+W043	PARTIAL	Columns exist in tables (q 'TrapAtkPercent' etc.) and damage decomp is under code/decomp, but I did not trace the combine formula; no formula-level summary. Missing: a readable damage-calc method located via refs.
+W044	PARTIAL	q IsUsingCost: UnitSkillState.c:3985 `if (IsUsingCost != false)` and UnitModel.c:578 consume the flag; Skill.csv row 10010000.. holds node JSON. Not traced whether 10010500 tree lacks the node.
+W045	PARTIAL	q 'VfxZOffset' -k code: GameObjectManager+_SpawnHitBoxAsync_d__128.c:355 `VStack_68.z = VfxZOffset`, HitBox.c:9375 uses it. Z added in local vec; rotation by VFX direction not confirmed.
+W046	PARTIAL	q VfxSpeeds: UnitController.c:1746 `_AnimSpeeds = vfxEvent.VfxSpeeds` (same list type as animation speeds supports 'like animationSpeeds'); endTime clock semantics not traced.
+W047	OUT_OF_SCOPE	Section header of open items (executeTime/moveOffset defaults), not one factual question.
+W048	PARTIAL	MonsterMoveState.c:57 `AvoidStatePercent <= roll*100 - ...`; MonsterAvoidState.c:114 uses _AvoidRange. Kkamong numbers (3.5/50/1.5) not looked up in Monster.csv; direction of retreat not traced.
+W049	ANSWERED	Const.csv:119-121 MonsterAlertTrackTargetTimeMultiplier 0.5 (applied once when target changed), MonsterAlertLostTargetRecentTime 3. Used: MonsterAlertState.c:191,203. MonsterCombatExitDelay=10 used MonsterController.c:1365 `CombatExitTime = TimeNow + delay`. So not unused.
+W050	OUT_OF_SCOPE	Legend line of the doc, not a game fact.
+W051	PARTIAL	Sector.csv AreaType values only TopBoundary/BottomBoundary/Playable (no Left/Right) confirms premise; Campaign.csv has BoundarySpecialFieldId column. Placement/shift rule of boundary rows not traced.
+W052	OUT_OF_SCOPE	Lazy spawn at 42 m is a web performance choice, not in the build.
+W053	PARTIAL	TrapObject.c:785 `if (TTrap.DestroyAfterAction) Despawn` after hitbox spawn (so it despawns after acting). The 1 m trigger, 24 m activity range and damage formula not located (only TrapAtkPercent getters in TDifficulty/TVariantDifficulty).
+W054	PARTIAL	ShadowMonsterSpawn.csv header: Difficulty,StressState,ShadowSpawnInterval,ShadowSpawnPercent,ShadowMonsterCountMin/Max (values readable). 1.5 s spacing, 3.5 m radius and 30% step rule not traced.
+W055	PARTIAL	Campaign.csv GainedExp (101 -> 500), HasEscapeExpReward column exist; per-monster/chest EXP and Quest-drop gating not traced (DropGoods.c has _goQuestVfx only).
+W056	PARTIAL	Sector.csv cols Bgm,CombatBgm; Monster.csv cols BgmPriority,BossBgm; Const MonsterCombatExitDelay=10 (not 4). Where the BGM switch and 4 s revert happen not traced.
+W057	ANSWERED	Timeline data exists: q Timeline -k assets, TL_InGameCutScene_BossFeature_SoulCollector_01.playable m_Duration 7.8667 with Signal Track; Const.csv:147 CutsceneStateBuffId 2002001. Web claim 'no Timeline data' and 3 s are wrong.
+W058	PARTIAL	Not searched in depth; prefab hierarchy exported under assets/ but no tool to query which component selects Front/Back groups.
+W059	ANSWERED	q DropItemFX -k assets: AssetBundles/f9021be3.../DropItemFX_Quest.prefab exists and DropGoods.prefab:91 references it. Not 'unexported'.
+W060	ANSWERED	Skill.csv has 50002000 (bandage), 50002001, 50002002 ... 49 rows starting 5000 (grep '^5000'); Item.csv SkillId col 50002000. Web claim of absence is wrong (likely loader gap).
+W061	ANSWERED	TableEncrypted/SkillExecutor.csv exists (report.tsv:34): id 10001 SanctuaryTree UseLimit 1, InteractStressConditions Alert|Fear|Despair, ActionEvents. Table is present.
+W062	ANSWERED	Buff.csv ids start at 10003 (no 10001/10002); Item.csv columns have Worth/SellPrice but no weight column. Both web statements confirmed from data.
+W063	ANSWERED	Campaign.csv PatrolMonsterId 301010, PatrolMonsterCount 3 (campaigns 101..); consumed in GameObjectManager+__c__DisplayClass221_0.c:53. ShadowMonsterSpawn.csv has AnomalyGroupSpawnId col. DisposableObject.csv row1 SampleBox 111000; no SampleBox asset found (q SampleBox -k assets: 0).
+W064	PARTIAL	AnomalyGroupSpawnId column confirmed (ShadowMonsterSpawn.csv); DropItemFX_Quest prefab exists. Fire-trap VFX and SphereFieldExit ring not searched.
+W065	PARTIAL	Sector.csv ZonePointDatas contain ZoneFlags PlayerSpawn/Outside (sector 3010, 9999). Fallback rule (furthest Outside from exit) not traced.
+W066	ANSWERED	code: CharacterController+__c__DisplayClass151_0.c:207 `OnTryKeyInteraction ... ConsumeKeyItems` loops ReqTryKeyInteraction.KeyItemIds and removes from inventory (named consume).
+W067	OUT_OF_SCOPE	Web input-handling bug fix; not a build fact.
+W068	PARTIAL	shaders/*/shader.json exist per shader (e.g. Shader_Graphs_..._Puddle with UniversalUnlitSubTarget) but I could not tie the UI/table shader to lit vs unlit; no shader source decompile, only pass/keyword json.
+W069	OUT_OF_SCOPE	Web UI design for skipping dialogs.
+W070	OUT_OF_SCOPE	BFS path length is a measurement of web grid; arrows-on-floor count not a queryable fact.
+W071	ANSWERED	q InputSettings -k assets: assets/ExportedProject/Assets/MonoBehaviour/InputSystem.inputsettings.asset:24-25 m_DefaultDeadzoneMin: 0.2, Max: 0.925 (web guessed 0.125).
+W072	ANSWERED	Timeline playables exported (q Timeline -k assets; PlayableDirector in IngameCutScene_* prefabs, TL_*.playable). GameCutsceneManager.c:991 calls PopupManager.HideCanvas. TrackOffset readable in .playable.
+W073	ANSWERED	bin/udk type EGoodsGradeType: None=0 Normal=1 Rare=2 Elite=3 Epic=4 Legend=5 Unique=6.
+W074	PARTIAL	types.cs:564486 const LOOTING_COMPLETED = "LootingCompleted" (Const.cs:486). GetInteractionSfx(IInteractiveObject) body readable: WaveExit->InteractionEscape, else InteractionLooting literal; empty-_interactionSfx fallback not fully traced.
+W075	OUT_OF_SCOPE	Web input mapping choice for bag slot click.
+W076	PARTIAL	LocalizedText.csv searchable but I did not find the stat format/EStatType key; prefab mask text not checked.
+W077	PARTIAL	Item.csv has Worth/SellPrice columns and ArtifactDeal.csv exists; basePrice formula for artifacts not traced.
+W078	PARTIAL	types.cs:174494 NewTagManager has HashSet _archiveItemIds/_archiveEquipmentIds/_archiveMonsterGroupIds and IsNewArchiveItem/Equipment/Monster. Clear-on-hover not traced.
+W079	NO_TOOL	q ForceReturnToTitle: code 0 hits, only Sample.lua:184 `LuaApi:ForceReturnToTitle()`. SystemPagePresenter OnGiveUp uses GiveUpDescription. Missing: Lua API name -> C# handler map (bindings registered by string), so the effect (loss of items) is untraceable.
+W080	PARTIAL	q questMark -k code: InventoryGoodsSlotPresenter.c:1080 uses (fields).questMark GameObject; backSelect/missionMark/subIcon wiring not traced.
+W081	PARTIAL	DeadManBox_03.prefab:170 `_interactionSfx:` has empty value (so web assumption of bare 'InteractionLooting' text is not in prefab); GetInteractionSfx returns StringLiteral_InteractionLooting for non-escape types. Clip group existence not checked.
+W082	ANSWERED	InGameInteractionPromptPresenter.c:202 GetInteractionSfx: WaveExit->InteractionEscape; others InteractionLooting literal. CharacterView.c:904 GetInteractionAnimation returns battle_search for RewardBox/MimicObject/InteractiveTrigger else default_idle. LocalizedText.csv:184 DeadMonsterFormat '{0} Corpse'.
+W083	NO_TOOL	q 'EquipPartGroup|DropEquipped|OnDead.*Equip' -k code: only inventory duplicate-group checks. Missing: caller/xref search (who handles death/escape and equipped goods), so the death-time equipment fate cannot be found.

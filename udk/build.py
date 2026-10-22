@@ -230,10 +230,17 @@ def step_audio(L, out, game_re):
 
 
 def step_shaders(L, out, game_re):
-    if os.path.isdir(os.path.join(out, "shaders")):
+    if os.path.exists(os.path.join(out, "shaders", "summary.txt")):
         return
+    shutil.rmtree(os.path.join(out, "shaders"), ignore_errors=True)
     run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.shaders", out, L["game"]],
         6 * 3600, os.path.join(out, "logs", "shaders.log"), min_free_gb=6)
+
+
+def step_settings(L, out, game_re):
+    from udk import settings
+    found = settings.run(out, L["data_dir"])
+    log(f"settings: {', '.join(found) or 'none found'}")
 
 
 def step_index(L, out, game_re):
@@ -242,10 +249,11 @@ def step_index(L, out, game_re):
 
 
 STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
-         "assets": step_assets, "shaders": step_shaders, "index": step_index}
+         "assets": step_assets, "shaders": step_shaders, "settings": step_settings,
+         "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,assets,data,audio,shaders,ghidra,index"):
+def main(game, out, game_re=None, steps="inspector,settings,assets,data,audio,shaders,ghidra,index"):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     if os.path.isfile(game):

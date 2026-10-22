@@ -1,0 +1,43 @@
+id	verdict	evidence
+W001	ANSWERED	grep defaultEaseType assets/ExportedProject/Assets/Resources/DOTweenSettings.asset -> 'defaultEaseType: 6' (Ease enum 6 = OutQuad). Project-wide default confirmed; per-tween overrides still need the call sites.
+W002	OUT_OF_SCOPE	Headless software-rasterizer frame time on the web build; not a fact in the original build.
+W003	NO_TOOL	Searched q 'm_ActiveColorSpace' (0 hits); out/vd/assets/ExportedProject/ProjectSettings has no ProjectSettings.asset (only Audio/Graphics/Quality/Time...). Missing: PlayerSettings (globalgamemanagers) not exported, so color space unreadable. SetColor usage claim is checkable via decomp only by hand.
+W004	OUT_OF_SCOPE	Heading 'choose by image'; a judgement about matching visuals, not a build fact.
+W005	OUT_OF_SCOPE	ParticleSystem noise algorithm is Unity engine native code, not in game build. Per-prefab noise parameters are in assets (not checked here).
+W006	ANSWERED	rg 'm_UseCustomTrailVertexStreams: 1' and 'm_TrailVertexStreams' in assets/ExportedProject/Assets/AssetBundles/*/TitleObject.prefab -> 'm_TrailVertexStreams: 00010304'. Per-renderer stream lists are in the dump.
+W007	OUT_OF_SCOPE	Section header for the doc's own unknowns list; no fact to check.
+W008	NO_TOOL	Sector.csv row 9001 has ZonePointDatas/NpcSpawnDatas (local positions) but q '9001' in Campaign.csv/Lua finds no campaign grid cell (0,1) or z+30 offset for the lounge. Missing: lounge map/grid placement (scene/prefab or runtime code) not located.
+W009	PARTIAL	Sector 9003 exists (Sector.csv: Playable, Lounge, NPC 700013 at 18.55:0:28.92); data/StreamingAssets/LuaEncrypted/Mission/9003.lua exists. Not shown: the areaOpen(3) load gate and grid cell; no grid placement surfaced.
+W010	ANSWERED	grep Const.csv: 'CustomerMaxCount,5' 'CustomerSpawnPercentBase,0,40' 'CustomerSpawnPercentUserCount,0,12'; GameObjectManager.<RefreshCustomerNpcs>g__SpawnRandomCustomerNpcs reads them. Sector 9001 GuestSpawnDatas has 5 positions (Id -1). So not a fixed 2; UserLevel>=2 gate not confirmed.
+W011	PARTIAL	Campaign Lua and LoungeQuest Lua are decoded (data/StreamingAssets/LuaEncrypted/LoungeQuest/*.lua, Common/Common.lua) but the Type='Quest' or Purpose rule is web-side classification; the Lua-side tags are readable by hand only, no direct statement.
+W012	ANSWERED	grep '^700105,' data/.../Npc.csv -> '700105,폰부스투명,None,-1,,Default' (transparent phone booth NPC); Sector 9001 PhoneBoothSpawnDatas at 8.896:0:20.99. So it is an invisible phone-booth NPC, not a spirit.
+W013	PARTIAL	code/methods.tsv has 506 LoungeQuest* methods (LoungeQuestClearEvent.CalculateProgress etc.), so the original C# does exist in the decomp; state machine not read here. Tables LoungeQuest.csv/LoungeQuestTask.csv present.
+W014	PARTIAL	GroundNavigation.c: width = ((1 - _widthPerspectiveScale)*|dot(seg,_cameraDirection)| + scale) * _ribbonWidth * 0.5; default scale 1.0 in ctor, camera dir (-1,0,1). The runtime value (1.5) is set outside ctor, not found.
+W015	PARTIAL	Campaign.csv has FixedSectors/RandomPlacedSectorIds/ThemeType/MapSize columns (e.g. 1100: 2|2 grid, 4 fixed sectors). Whether a campaign is 'playable on web' (art present) is a web-side matter.
+W016	ANSWERED	Campaign.csv Category counts Normal 38 / Story 7 / Tutorial 1 (ECampaignCategory enum); LocalizedText.csv has no group label keys (only TCampaign_Name_<id>, UCampaignDetailPanel_*). Confirms labels are not in text table.
+W017	PARTIAL	Character.csv has IsUsable and no unlock-condition column (header checked); unlock after campaign 1100 is not in the table; likely in FeatureUnlock.csv/Lua, not confirmed.
+W018	PARTIAL	GameShopManager.c: roll = RandomUtility.GetRandomBool((AppearProbability+GradeBonus)/10000); AppearProbability<0 -> always true; ShopProduct.csv StockCount -1 = unlimited. Re-roll timing per dive not shown.
+W019	ANSWERED	grep Const.csv: 'CoinToGoldRate,48,0,,int,이계의 주화를 골드로 바꿀때 비율' (coin->gold 48). Item 10001 is 'Alien coin (spot)' (Item.csv). So not 1:1.
+W020	ANSWERED	Const.csv 'RestCost,400' 'RestCostMultiplier,0,2.5'; Extensions.CalculateRestCost decomp: fVar10=RestCost; loop fVar10 *= RestCostMultiplier per count. Matches 400 x 2.5^n.
+W021	ANSWERED	Decomp consumers exist: CharacterController.c calls GamePlayer.get_LightFuelEfficiency; GameShopManager.c uses ShopProductGradeAppearBonus; De.Lua/LuaApi.c uses InventorySlotCount; GamePlayer.c has Safe/RecoveryItemCount. Original applies them.
+W022	PARTIAL	ENpcFunctionType.DangerLevel=20 enum and LocalizedText exist; effect on next dive default difficulty not traced.
+W023	PARTIAL	Const.csv: CoinToGoldRate 48, ArtifactPriceMinPercent 30, ArtifactPriceCampaignLevelGrowthRate 0.15; ArtifactPrefix.csv PriceMultiplier/Prefer/Dislike columns; ArtifactDealManager.GetPriceMultiplierPercent/GetTagPriceMultiplier exist. Full formula not read (note campaign-level growth factor absent from the web formula).
+W024	PARTIAL	Character.csv 100001 ActiveSkillIds=10010300|10010400|10010700|10010600|10010500, but default slot assignment (RMB/Q) comes from server/profile; mapping not in dump.
+W025	OUT_OF_SCOPE	Doc's own unknowns header; no fact.
+W026	PARTIAL	Skill node has executeTime field (types.cs 0x5C) but UnitSkillState use not traced; None@0.18 dash+slash rule not confirmed.
+W027	PARTIAL	types: StateChangeSkillTrigger{States[],Exclude}; EActionState = None,Idle,Move,Skill,Dying,Dead,Revive,CrowdControlled,Escaped,Interact,... StateChangeEvent.CheckSkillTriggered exists; 'enter from outside list' logic not read.
+W028	PARTIAL	UnitSkillState.c calls UnitModel.get_AtkSpeed (line ~4733) in time scale; EStatusEffectTag BasicAttack=4 and TSkill.IsBasicAttack exist; exact use not confirmed.
+W029	PARTIAL	UnitSkillState.c: ESkillMoveType 1 (MoveByInput) and 6 (MoveByInputNoAim) share the branch: UnitView.Move(UnitModel.MoveDir, UnitModel.MoveSpeed); no separate dash with moveSpeed seen in these paths. Dash replacement guess not supported here.
+W030	ANSWERED	UnitSkillState.c start-move switch case 4: dir = UnitModel.MoveDir; if length^2 < 1e-10 falls through to case 2 (_normalizedDir = aim dir). Matches 'move dir, else aim'.
+W031	ANSWERED	UnitSkillState.CalculateMoveToTarget: dist = |target-self| + action.moveOffset; if dist < -moveOffset -> zero move; else moveSpeed = dist/remainMoveTime (moveSpeedType==2). So moveOffset -1 means stop 1 m short, not empty.
+W032	ANSWERED	CalculateMoveToTarget: EMoveSpeedType.Distance(2) sets _moveSpeed = (distToTarget+moveOffset)/_remainMoveTime; so total distance is to the target, not moveSpeed*(end-start). Only used in MoveToTarget.
+W033	PARTIAL	UnitSkillState.CalculateMoveToTarget adds moveOffset to center distance; no unit radius read there. Capsule radii live in prefab colliders (assets), not queried.
+W034	NO_TOOL	Searched q 'Cone|Sector|angle' in code; ESkillShape has Cone=30 enum but the hit-test code with non-uniform scale normalisation was not located by name; method bodies readable but no index by behaviour.
+W035	ANSWERED	HitBox.c Update, moveType 6 (FollowSelf): transform.position = owner.position + _rotatedStartOffset; rotation not touched. Offset fixed at spawn.
+W036	ANSWERED	HitBox.MoveTrace (moveType 7 TraceOwner): dir = normalize(ownerPos - pos); if dist < 0.2 DestroyHitBox, else Move(dir). Matches 'fly back, destroy on arrival'.
+W037	PARTIAL	enum value 'Pull = 3' (types.cs:45041) exists; the pull-until-contact behaviour not located.
+W038	PARTIAL	UnitModel.c: TBuff.ExpirePerStack false -> shared stack timer; true -> per-stack EndTime = now+GetModifiedBuffDuration; MaxStackCount column in Buff.csv. Add/clamp rule not read.
+W039	PARTIAL	Buff.csv 1017 Bleed: Duration 8, DotHpDamageEffect TickAmount 1; UnitController.UpdateTickDamage/ApplyDotEffect<T> exist but tick interval (1 s) constant not read (generic local function).
+W040	NO_TOOL	Data confirms Buff 1302: Duration 1.5, MinDuration 0.7, MaxDuration 2.5, Stats AtkSpeedPercent BasePercent 120. Formula consumer not found: DurationOverride only referenced in TBuff/BuffDurationOverride; UnitModel.GetModifiedBuffDuration uses DurationAmplifier only. Missing: callers via field access of BuffDurationOverride not indexed.
+W041	PARTIAL	Buff.csv 2059: DamageConversionEffect{ElementalType Fire, Percent 50, UseStatValue}; EHpRecoveryReasonType.DamageConversion=2; UnitController+DisplayClass118_0 matches ElementalType. 'Percent of that element dmg -> heal' plausible, not fully read.
+W042	PARTIAL	Shield.csv has IsDecrease column; UnitModel+__c returns TShield.IsDecrease; the linear decay in Duration not seen in body.

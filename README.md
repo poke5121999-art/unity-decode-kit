@@ -22,6 +22,10 @@ bin/udk q 'SkipHold'                  # tìm khắp code, kiểu, data, asset
 bin/udk method 'CutscenePanelPresenter.<Start>b__2_0'
 bin/udk type CutscenePanelView
 bin/udk refs 'Diveloading'
+bin/udk callers UnitModel.GetModifiedBuffDuration   # ai gọi method, ai đọc/ghi field
+bin/udk prefab IntroTimelineObject    # cây GameObject, component, field trỏ tới đâu
+bin/udk settings PlayerSettings ColorSpace
+python -m udk.unity <ExportedProject> <project mới> 6000.3.18f1   # nâng project lên Unity mới
 ```
 
 Đọc `out/<tên>/INDEX.md` để biết dump có gì.

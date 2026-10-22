@@ -106,7 +106,7 @@ def dump_shader(t, out_dir):
             entries[pi] = blob_entries(t, pi)
         except Exception as e:  # noqa: BLE001 - one bad platform blob should not hide the others
             summary.setdefault("errors", []).append(f"platform {t['platforms'][pi]}: {e}")
-    pending = []
+    pending, used = [], set()
     for si, ss in enumerate(pf["m_SubShaders"]):
         sub = {"tags": ss.get("m_Tags"), "lod": ss.get("m_LOD"), "passes": []}
         for pj, ps in enumerate(ss["m_Passes"]):
@@ -130,6 +130,9 @@ def dump_shader(t, out_dir):
                             continue
                         var = "_".join(kws) or "base"
                         stem = f"s{si}.{pname}.{stage[4:].lower()}.{SAFE.sub('_', var)}"[:180]
+                        if (stem, kind) in used:  # same pass/stage/keywords on another platform or blob
+                            stem = f"{stem}.b{bi}.p{pi}"
+                        used.add((stem, kind))
                         path = os.path.join(sdir, stem + "." + kind)
                         with open(path, "wb") as fh:
                             fh.write(code)
@@ -190,7 +193,10 @@ def run(out, files):
             pending += dump_shader(t, sdir)
             n += 1
     ok = decompile(pending) if pending else 0
-    print(f"[shaders] {n} shaders, {len(pending)} DXBC programs, {ok} decompiled to HLSL", flush=True)
+    summary = f"{n} shaders, {len(pending)} DXBC programs, {ok} decompiled to HLSL"
+    with open(os.path.join(sdir, "summary.txt"), "w") as fh:
+        fh.write(summary + "\n")
+    print(f"[shaders] {summary}", flush=True)
 
 
 if __name__ == "__main__":
