@@ -19,7 +19,8 @@ import time
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TP = os.path.join(KIT, "third_party")
-INSPECTOR = os.path.join(TP, "inspector-legacy", "Il2CppInspectorRedux.Legacy.CLI-linux-x64", "Il2CppInspector")
+# Il2CppInspectorRedux 2026.2 built from source with tools/inspector/tolerant.patch (see setup.sh)
+INSPECTOR = [os.path.join(TP, "dotnet", "dotnet"), os.path.join(TP, "inspector-tolerant", "Il2CppInspector.dll")]
 ASSETRIPPER = os.path.join(TP, "assetripper", "AssetRipper.GUI.Free")
 # Libraries with public source: their bodies are not worth decompiling. Closed or paid
 # libraries (MasterAudio, DOTweenPro, Febucci TextAnimator, InputIcons...) stay in, because a
@@ -96,7 +97,7 @@ def step_inspector(L, out, game_re):
         log(f"metadata repaired: {how}")
         meta = fixed
     binary, meta = fix_binary(L, d, meta)
-    run([INSPECTOR, "-i", binary, "-m", meta, "-e", "none", "--select-outputs",
+    run(INSPECTOR + ["-i", binary, "-m", meta, "-e", "none", "--select-outputs",
          "-c", os.path.join(d, "types.cs"), "-p", os.path.join(d, "il2cpp_ghidra.py"), "-t", "Ghidra",
          "-o", os.path.join(d, "metadata.json"), "-h", os.path.join(d, "cpp")],
         1800, os.path.join(d, "log.txt"), min_free_gb=7)
@@ -228,16 +229,23 @@ def step_audio(L, out, game_re):
     log(f"audio: {n_banks} banks, {n_events} events rendered")
 
 
+def step_shaders(L, out, game_re):
+    if os.path.isdir(os.path.join(out, "shaders")):
+        return
+    run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.shaders", out, L["game"]],
+        6 * 3600, os.path.join(out, "logs", "shaders.log"), min_free_gb=6)
+
+
 def step_index(L, out, game_re):
     from udk import index
     index.write(out, L)
 
 
 STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
-         "assets": step_assets, "index": step_index}
+         "assets": step_assets, "shaders": step_shaders, "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,assets,data,audio,ghidra,index"):
+def main(game, out, game_re=None, steps="inspector,assets,data,audio,shaders,ghidra,index"):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     if os.path.isfile(game):

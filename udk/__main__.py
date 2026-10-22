@@ -1,6 +1,6 @@
 """udk: query a decoded Unity game dump instead of watching clips.
 
-  udk q <regex> [-k code|types|data|assets|audio] [-n N]   search everything, grouped by kind
+  udk q <regex> [-k code|types|data|assets|audio|shaders] [-n N]   search everything, grouped by kind
   udk method <Type.Method | regex>                    print decompiled bodies
   udk type <Type>                                     print the type with fields, offsets, defaults
   udk refs <asset path or name regex>                 what an asset uses and what uses it
@@ -24,6 +24,7 @@ KINDS = {
     "data": "data",
     "assets": "assets/ExportedProject/Assets",
     "audio": "audio",
+    "shaders": "shaders",
 }
 csv.field_size_limit(1 << 30)
 
@@ -144,7 +145,7 @@ def main():
     p.add_argument("game")
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
-    p.add_argument("--steps", default="inspector,assets,data,audio,ghidra,index")
+    p.add_argument("--steps", default="inspector,assets,data,audio,shaders,ghidra,index")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)

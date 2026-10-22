@@ -19,7 +19,15 @@ get https://github.com/SamboyCoding/Cpp2IL/releases/download/2022.1.0-pre-releas
 chmod +x Cpp2IL-Linux
 
 get https://dot.net/v1/dotnet-install.sh dotnet-install.sh
-[ -x dotnet/dotnet ] || timeout 900 bash dotnet-install.sh --channel 10.0 --runtime dotnet --install-dir "$TP/dotnet"
+[ -d dotnet/sdk ] || timeout 900 bash dotnet-install.sh --channel 10.0 --install-dir "$TP/dotnet"
+
+# Il2CppInspectorRedux from source with udk's tolerant patch (damaged/protected builds no longer abort)
+if [ ! -f inspector-tolerant/Il2CppInspector.dll ]; then
+  [ -d inspector-src ] || timeout 600 git clone -q --depth 1 --branch 2026.2 --recurse-submodules https://github.com/LukeFZ/Il2CppInspectorRedux.git inspector-src
+  (cd inspector-src && { git apply --check "$KIT/tools/inspector/tolerant.patch" 2>/dev/null && git apply "$KIT/tools/inspector/tolerant.patch" || true; })
+  # MSBuild node reuse would keep a child alive holding the heavy-job lock fd: disable it
+  MSBUILDDISABLENODEREUSE=1 DOTNET_ROOT="$TP/dotnet" DOTNET_CLI_TELEMETRY_OPTOUT=1 timeout 1500 "$TP/dotnet/dotnet" build --disable-build-servers -c Release -o "$TP/inspector-tolerant" inspector-src/Il2CppInspector.CLI/Il2CppInspector.CLI.csproj >/dev/null
+fi
 
 get https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz jdk25.tar.gz
 [ -d jdk-25.0.5+8 ] || tar xzf jdk25.tar.gz
