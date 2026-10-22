@@ -93,11 +93,41 @@ index aaed003..75a2973 100644
          }
          
          foreach (var ti in _todoTypesExceedingNestingLimit)
+diff --git a/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs b/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs
+index 5029bdf..9068e07 100644
+--- a/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs
++++ b/Il2CppInspector.Common/IL2CPP/Il2CppBinary.cs
+@@ -477,8 +477,12 @@ namespace Il2CppInspector
+             var genericMethodPointers = Image.ReadMappedUWordArray(CodeRegistration.GenericMethodPointers, (int) CodeRegistration.GenericMethodPointersCount);
+             var genericMethodTable = Image.ReadMappedVersionedObjectArray<Il2CppGenericMethodFunctionsDefinitions>(MetadataRegistration.GenericMethodTable, (int) MetadataRegistration.GenericMethodTableCount);
+             foreach (var tableEntry in genericMethodTable) {
+-                GenericMethodPointers.Add(MethodSpecs[tableEntry.GenericMethodIndex], genericMethodPointers[tableEntry.Indices.MethodIndex]);
+-                GenericMethodInvokerIndices.Add(MethodSpecs[tableEntry.GenericMethodIndex], tableEntry.Indices.InvokerIndex);
++                // udk tolerant: skip entries that point outside the (possibly damaged) tables
++                if (tableEntry.GenericMethodIndex < 0 || tableEntry.GenericMethodIndex >= MethodSpecs.Length
++                    || tableEntry.Indices.MethodIndex < 0 || tableEntry.Indices.MethodIndex >= genericMethodPointers.Length)
++                    continue;
++                GenericMethodPointers.TryAdd(MethodSpecs[tableEntry.GenericMethodIndex], genericMethodPointers[tableEntry.Indices.MethodIndex]);
++                GenericMethodInvokerIndices.TryAdd(MethodSpecs[tableEntry.GenericMethodIndex], tableEntry.Indices.InvokerIndex);
+             }
+ 
+             TypeDefinitionSizes = Image.ReadMappedVersionedObjectPointerArray<Il2CppTypeDefinitionSizes>(
 diff --git a/Il2CppInspector.Common/Model/AppModel.cs b/Il2CppInspector.Common/Model/AppModel.cs
-index 309f5d7..7cb56cb 100644
+index 309f5d7..4bf32c3 100644
 --- a/Il2CppInspector.Common/Model/AppModel.cs
 +++ b/Il2CppInspector.Common/Model/AppModel.cs
-@@ -215,6 +215,8 @@ namespace Il2CppInspector.Model
+@@ -200,7 +200,10 @@ namespace Il2CppInspector.Model
+             // Add generic methods definitions and types used by them to C++ type model
+             Group = "types_from_generic_methods";
+ 
++            // udk tolerant: an overwritten method spec can resolve to a method already declared; keep the first
+             foreach (var method in TypeModel.GenericMethods.Values.Where(m => m.VirtualAddress.HasValue)) {
++                if (Methods.ContainsKey(method))
++                    continue;
+                 declarationGenerator.IncludeMethod(method);
+                 AddTypes(declarationGenerator.GenerateRemainingTypeDeclarations());
+ 
+@@ -215,6 +218,8 @@ namespace Il2CppInspector.Model
              if (Package.MetadataUsages != null)
                  foreach (var usage in Package.MetadataUsages) {
                      var address = usage.VirtualAddress;
@@ -106,7 +136,7 @@ index 309f5d7..7cb56cb 100644
  
                      switch (usage.Type) {
                          case Il2CppMetadataUsageType.StringLiteral:
-@@ -285,6 +287,9 @@ namespace Il2CppInspector.Model
+@@ -285,6 +290,9 @@ namespace Il2CppInspector.Model
  
                              break;
                      }
@@ -189,10 +219,29 @@ index 707d3f0..dd8478f 100644
              }
          }
 diff --git a/Il2CppInspector.Common/Reflection/TypeModel.cs b/Il2CppInspector.Common/Reflection/TypeModel.cs
-index fb30cb8..fb69bd7 100644
+index fb30cb8..21a03d0 100644
 --- a/Il2CppInspector.Common/Reflection/TypeModel.cs
 +++ b/Il2CppInspector.Common/Reflection/TypeModel.cs
-@@ -384,15 +384,17 @@ namespace Il2CppInspector.Reflection
+@@ -114,7 +114,9 @@ namespace Il2CppInspector.Reflection
+             }
+ 
+             // Create types and methods from MethodSpec (which incorporates TypeSpec in IL2CPP)
++            // udk tolerant: a protected build can overwrite part of the table; skip entries that do not resolve
+             foreach (var spec in Package.MethodSpecs) {
++              try {
+                 var methodDefinition = MethodsByDefinitionIndex[spec.MethodDefinitionIndex];
+                 var declaringType = methodDefinition.DeclaringType;
+ 
+@@ -139,6 +141,8 @@ namespace Il2CppInspector.Reflection
+                 }
+                 method.VirtualAddress = Package.GetGenericMethodPointer(spec);
+                 GenericMethods[spec] = method;
++              } catch (Exception e) when (e is IndexOutOfRangeException or ArgumentException or NullReferenceException or InvalidCastException) {
++              }
+             }
+ 
+             // Generate a list of all namespaces used
+@@ -384,15 +388,17 @@ namespace Il2CppInspector.Reflection
          // Get the type used in a metadata usage
          public TypeInfo GetMetadataUsageType(MetadataUsage usage) => usage.Type switch {
              Il2CppMetadataUsageType.Il2CppType or Il2CppMetadataUsageType.TypeInfo => TypesByReferenceIndex[usage.SourceIndex],
