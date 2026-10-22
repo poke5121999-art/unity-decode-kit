@@ -1,0 +1,48 @@
+id	source	topic	question	what_web_did
+Z001	games/toc-do/README.md:121	assets	What blend mode (alpha/additive and _DstBlend) does each VFX material use when the material does not store _DstBlend?	export_fx_ui.py guesses the blend mode and adds an alpha-from-luminance _la texture for opaque textures
+Z002	games/toc-do/README.md:123	assets	Which lighting/colour formula and reflection probe setup does the NssStandard shader use in the original?	kept the gamma formula for NssStandard because no reflection probe exists; switching made 11citynew too dark
+Z003	games/toc-do/README.md:126	track	How much extra road after the start line and exit road after the finish does each A-to-B track really have?	exporter adds 45-150 m after start line and 150 m exit road after finish
+Z004	games/toc-do/README.md:129	assets	Which prefab/mesh is the classic item box and what is its real size?	no own prefab; used propsbox_huge 4.5 m board and a box copied from a sample row in scene Level_TrainTrack_B
+Z005	games/toc-do/README.md:130	audio	Which sounds does the item bank DJ contain and which event plays on each item use?	borrowed 17 sounds from other banks plus a synthesized lock-on beep; only Play_DJ_wind is original
+Z006	games/toc-do/README.md:131	audio	Which events and files play the 3-2-1 countdown voice?	used Play_UI_ATM_countdown beep and Play_XH_Ready chime on beat 1 (Play_BGM_CountDown_Final)
+Z007	games/toc-do/README.md:99	track	Where are item boxes placed on tracks that have no propspointconfig?	items.js auto-generates a box row every ~400 m
+Z008	games/toc-do/README.md:95	rules	What exact stun, slow and decay values does each item apply to a kart (stunT, decay, slowT, slowMul)?	generic k.fx fields with chosen values per item; kart.js applies loss of steering, braking and a speed-cap multiplier
+Z009	games/toc-do/tools/UI.md:13	ui	What UIRoot reference resolution and match mode does the game use?	assumed ref 1280x720, match 1 (scale by height), chosen from layout proportions
+Z010	games/toc-do/tools/UI.md:16	ui	How is the 64-bit localization m_key of CUILocalizationScript computed?	could not decode it; looked up strings by English/Chinese text and picked the most common VN row (10 ambiguous strings)
+Z011	games/toc-do/tools/UI.md:18	ui	What are the Vietnamese labels for UI text that is missing from the base localization table (downloaded later)?	translated by hand in VI_FIX
+Z012	games/toc-do/tools/UI.md:23	ui	Where does the race HUD attach the controls prefab in the hierarchy?	attached controls at the root of racehud by guess
+Z013	games/toc-do/tools/UI.md:30	ui	Which hierarchy paths and what meaning do the HUD value nodes (speed, nitro bar, small boost, rank, lap) have in the original Lua code?	names measured but meaning of each path inferred
+Z014	games/toc-do/tools/UI.md:40	ui	What is the real scale and placement of the LAP and FINISH signs above the road?	3D quads at 10 px per metre; lap2 and lap3 share one texture uncut by UV
+Z015	games/toc-do/tools/UI.md:42	ui	Which atlas holds the 35 missing sprites (Replace*Sprite, Icon_Cup2/3, Icon_Win/Lose, BG_ShowDis)?	buttons left with img.off and img.miss
+Z016	games/toc-do/tools/UI.md:43	ui	What does the UIFont bitmap font look like and what does gradient text colour use?	drew 3 bitmap labels with a number font; averaged text gradients; dropped UIPanel clipping and animator/DOTween
+Z017	brain/plans/toc-do.md:51	audio	What do the original engine, tyre-screech, boost, collision and music sounds sound like (core banks Default_Vehicle, BGM_Default, InGameBase)?	synthesized engine and tyre-screech in audio.js; borrowed boost, collision and music; never listened to by ear
+Z018	brain/plans/toc-do.md:53	track	Does Troy City have baked lightmaps and what is its true road brightness?	no baked lightmap found; road darker and grey-brown than reference
+Z019	brain/plans/toc-do.md:54	assets	What are the real parameters of mesh-based VFX (DTS flame, FenghenSmall)?	rebuilt with simple shapes using original textures
+Z020	brain/plans/toc-do.md:55	physics	What are the real per-car stats (speed, accel, handling, drift, nitro) for each kart?	stats by tier, not linked to per-car carparams; car names self-invented because name table is on the server
+Z021	brain/plans/toc-do.md:71	physics	What are the real track collision shapes (Havok HKX Pick_Track, Pick_Wall) and wall behaviour?	replaced by a ribbon built from TrackPointDataList; HKX not read
+Z022	brain/plans/toc-do-full.md:19	rules	What are the ranked tier star thresholds, points per place and promotion/demotion rules?	chosen numbers per tier (Dong to Sieu Dang, stars, Vong Trong)
+Z023	brain/plans/toc-do-full.md:21	ai	How strong are the bots in item practice and how are bot skills chosen per rank?	weak bot and RANK.botSkill by chosen formula
+Z024	brain/plans/toc-do-full.md:25	rules	What are the license skill (So/Trung/Cao) upgrade costs and stat multipliers?	chosen costs and multipliers applied in garage.applySkills to me.p
+Z025	brain/plans/toc-do-full.md:29	rules	How do club, couple, friends, story, shop and fashion systems really work and pay out?	single-player versions with bots replacing people, invented rules
+Z026	brain/plans/toc-do-full.md:31	rules	What are the exact rules of event modes (Elimination, Coin Hunt, Cops and Robbers, Limited Race)?	rule choices made by the remake
+Z027	brain/plans/toc-do-full.md:86	audio	What are the original countdown voice and item sounds?	bank not in APK; beep/chime plus 17 borrowed sounds
+Z028	brain/plans/toc-do-full.md:87	assets	What animation clips do PETs have, and how many PET models exist?	static models swayed by JS; only 21 PET models available
+Z029	brain/plans/toc-do-full.md:88	rules	What are the server-side tables: star scale, prices, gacha (Workshop) odds, quests and rewards?	all numbers invented and marked // chon in code
+Z030	brain/plans/toc-do-full.md:89	ui	Which strings or usage do rank badges cs and df map to?	no matching string; badges left unused
+Z031	brain/plans/toc-do-con-lai.md:34	track	What are the correct lightmap and sun scale (meta.sunScale) per track so Chinatown is not overexposed?	tuned per-track sunScale by measuring lightonly/albedoonly; fixed Chinatown with linear shader
+Z032	brain/plans/toc-do-con-lai.md:38	ai	Why does a bot float above the Troy overpass: real elevated road or falling off the ribbon?	unknown, suggested checking k.loc.y vs k.y and k.grounded
+Z033	brain/plans/toc-do-con-lai.md:41	drift	How large and how long-lived are drift sparks and do they inherit kart velocity?	tuned fire size and life by eye, suggested dropping inheritVel; original sparks hug the wheel
+Z034	brain/plans/toc-do-con-lai.md:23	rules	What are the real firework burst speed and size at the finish line?	shrunk the original finish_firework numbers to speed 9-16, size 0.5-0.9
+Z035	brain/plans/toc-do-con-lai.md:50	audio	What are the relative loudness mixes of engine, music and effects?	never heard by ear; subst sounds in data/audio.js
+Z036	brain/plans/toc-do-con-lai.md:55	camera	What is the path and timing of the opening fly-by camera for tracks other than 11citynew?	only 11citynew has an original path; others orbit the pack
+Z037	brain/plans/toc-do-con-lai.md:57	physics	How are per-car stats tied to each car in carparams?	stats by tier, not tied to per-car carparams
+Z038	brain/plans/toc-do-con-lai.md:60	track	What dynamic props (robots, billboards, waterfall) exist on 11City and how do they behave?	dropped during export
+Z039	brain/plans/toc-do-con-lai.md:61	rules	How does the original handle the slow finish scene after crossing the line?	not implemented, later replaced by invented GOAL, close-up, podium, XP card chain
+Z040	brain/plans/toc-do-con-lai.md:92	camera	What are the original chase camera distance, FOV and drift body yaw relative to camera?	web camera too close; original kart ~8% of width and 35-50 deg drift yaw vs web 10-15 deg
+Z041	brain/plans/toc-do-con-lai.md:93	nitro	What are the start-boost, minimum drift for a boost, and double-boost spacing rules?	from video: start boost adds nitro, too-short drift gives no boost, double boost ~0.3 s apart
+Z042	brain/plans/toc-do-con-lai.md:94	drift	What is the drift visual and effect colour for kart drift and boost?	blue thin streaks from video clips, no orange fire, smoke or black skid
+Z043	brain/plans/toc-do-con-lai.md:100	drift	What are the exact drift entry, charge and release rules and numbers?	rule chosen from video, marked chon in tuning.js
+Z044	brain/plans/toc-do-con-lai.md:108	nitro	How does CWW cut drift with Nitro plus Drift and store 2 boosts in one drift?	no original parameters; not implemented
+Z045	brain/plans/toc-do-con-lai.md:98	physics	What suspension spring and damping values does the kart body use at large dt?	spring diverged at large dt and was fixed by remake
+Z046	brain/plans/toc-do.md:27	nitro	How many nitro cells, fill rate per drift and duration does the original have?	nitro 2 cells, drift fills gauge, release then press to boost; numbers chosen
+Z047	brain/plans/toc-do.md:52	assets	What are the original HD texture resolutions for tracks and karts?	APK has only 128-256 px previews; HD downloaded later

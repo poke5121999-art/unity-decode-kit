@@ -1,6 +1,6 @@
 """udk: query a decoded Unity game dump instead of watching clips.
 
-  udk q <regex> [-k code|types|data|assets] [-n N]   search everything, grouped by kind
+  udk q <regex> [-k code|types|data|assets|audio] [-n N]   search everything, grouped by kind
   udk method <Type.Method | regex>                    print decompiled bodies
   udk type <Type>                                     print the type with fields, offsets, defaults
   udk refs <asset path or name regex>                 what an asset uses and what uses it
@@ -23,6 +23,7 @@ KINDS = {
     "types": "code/types.cs",
     "data": "data",
     "assets": "assets/ExportedProject/Assets",
+    "audio": "audio",
 }
 csv.field_size_limit(1 << 30)
 
@@ -39,7 +40,7 @@ def cmd_q(a):
         if not os.path.exists(path):
             continue
         r = subprocess.run([RG, "-n", "-i", "-m", "3", "--max-columns", "220", "--max-columns-preview",
-                            "-g", "!*.meta", "-g", "!*.png", "-g", "!*.asset.meta", a.pattern, path],
+                            "-g", "!*.meta", "-g", "!*.png", "-g", "!wwnames.txt", a.pattern, path],
                            capture_output=True, text=True)
         lines = r.stdout.splitlines()
         print(f"== {k}: {len(lines)} hits" + (f" (showing {a.n})" if len(lines) > a.n else ""))
@@ -143,7 +144,7 @@ def main():
     p.add_argument("game")
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
-    p.add_argument("--steps", default="inspector,assets,data,ghidra,index")
+    p.add_argument("--steps", default="inspector,assets,data,audio,ghidra,index")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)

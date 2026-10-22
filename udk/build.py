@@ -173,15 +173,26 @@ def step_assets(L, out, game_re):
         log(f"assets: {n_guid} assets with guids, {n_ref} references")
 
 
+def step_audio(L, out, game_re):
+    from udk import audio
+    if os.path.exists(os.path.join(out, "audio", "events.tsv")):
+        return
+    roots = [L["game"], os.path.join(out, "assets", "ExportedProject", "Assets")]
+    text = [os.path.join(out, "data"), os.path.join(out, "assets", "ExportedProject", "Assets")]
+    n_banks, n_events = audio.run(out, [r for r in roots if os.path.isdir(r)], literals(out), [t for t in text if os.path.isdir(t)])
+    log(f"audio: {n_banks} banks, {n_events} events rendered")
+
+
 def step_index(L, out, game_re):
     from udk import index
     index.write(out, L)
 
 
-STEPS = {"inspector": step_inspector, "data": step_data, "ghidra": step_ghidra, "assets": step_assets, "index": step_index}
+STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
+         "assets": step_assets, "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,assets,data,ghidra,index"):
+def main(game, out, game_re=None, steps="inspector,assets,data,audio,ghidra,index"):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     if os.path.isfile(game):

@@ -78,6 +78,23 @@ def block_mask(b, key):
     return best[1], best[2]
 
 
+USAGE_LISTS, USAGE_PAIRS = 22, 23  # header slots in metadata v24 (the table is gone from v27)
+
+
+def clamp_usage_lists(b, pairs):
+    """Empty metadataUsageLists entries whose range runs past metadataUsagePairs. Protected builds
+    plant such an entry to crash dumpers; the runtime never reads it."""
+    lo, size = pairs[USAGE_LISTS]
+    n_pairs = pairs[USAGE_PAIRS][1] // 8
+    fixed = 0
+    for off in range(lo, lo + size, 8):
+        start, count = struct.unpack_from("<II", b, off)
+        if start + count > n_pairs:
+            struct.pack_into("<II", b, off, 0, 0)
+            fixed += 1
+    return fixed
+
+
 def repair(src, dst, game_dir):
     """Write a readable copy of src to dst. Returns a description of what was done."""
     b = bytearray(open(src, "rb").read())
@@ -107,6 +124,28 @@ def repair(src, dst, game_dir):
     unity = unity_version(game_dir) or "2019.4.0f1"
     version = metadata_version(unity)
     struct.pack_into("<Ii", b, 0, MAGIC, version)
+    trapped = clamp_usage_lists(b, pairs) if version < 27 else 0
     with open(dst, "wb") as fh:
         fh.write(b)
-    return f"header xor 0x{key:02X}; blocks xor'd: {xored}; magic restored; version {version} (Unity {unity})"
+    return (f"header xor 0x{key:02X}; blocks xor'd: {xored}; magic restored; version {version} (Unity {unity}); "
+            f"{trapped} usage list entries pointed past the pairs table and were emptied")
+
+
+def literals(path):
+    """String literals straight from a readable global-metadata.dat. Entries are (length, offset)
+    pairs before v39 and bare offsets from v39 on (length = next offset - this one)."""
+    b = open(path, "rb").read()
+    version = struct.unpack_from("<i", b, 4)[0]
+    step = 12 if version >= 38 else 8  # header entries became (offset, size, count) triples
+    tab_off, tab_size = struct.unpack_from("<II", b, 8)
+    data_off, data_size = struct.unpack_from("<II", b, 8 + step)
+    out = []
+    if version >= 39:
+        offs = list(struct.unpack_from(f"<{tab_size // 4}I", b, tab_off)) + [data_size]
+        for a, z in zip(offs, offs[1:]):
+            out.append(b[data_off + a:data_off + z].decode("utf-8", "replace"))
+    else:
+        for i in range(0, tab_size, 8):
+            n, a = struct.unpack_from("<II", b, tab_off + i)
+            out.append(b[data_off + a:data_off + a + n].decode("utf-8", "replace"))
+    return out
