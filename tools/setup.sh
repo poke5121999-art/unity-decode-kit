@@ -34,9 +34,18 @@ fi
 get https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz rg.tar.gz
 [ -x rg ] || { tar xzf rg.tar.gz && mv ripgrep-15.2.0-x86_64-unknown-linux-musl/rg . && rm -rf ripgrep-15.2.0-x86_64-unknown-linux-musl; }
 
+mkdir -p wwiser vgmstream
+get https://github.com/bnnm/wwiser/releases/download/v20260808/wwiser.pyz wwiser/wwiser.pyz
+get https://github.com/vgmstream/vgmstream/releases/download/r2117/vgmstream-linux.zip vgmstream.zip
+[ -x vgmstream/vgmstream-cli ] || { python3 -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall('vgmstream')" vgmstream.zip && chmod +x vgmstream/*; }
+get "https://sourceforge.net/projects/unluac/files/Unstable/unluac_2025_12_23.jar/download" unluac.jar
+get https://github.com/frida/frida/releases/download/17.24.3/frida-gadget-17.24.3-linux-x86_64.so.xz frida-gadget.so.xz
+[ -s frida-gadget.so ] || xz -dkf frida-gadget.so.xz
+
 cd "$KIT"
 [ -x .venv/bin/python ] || timeout 600 uv venv -q -p 3.13 .venv
 WHEELS="$TP/ghidra_12.2_PUBLIC/Ghidra/Features/PyGhidra/pypkg/dist"
 timeout 600 uv pip install -q -p .venv/bin/python --no-index --find-links "$WHEELS" pyghidra jpype1
-timeout 600 uv pip install -q -p .venv/bin/python UnityPy capstone pefile lz4 pycryptodome
+timeout 600 uv pip install -q -p .venv/bin/python UnityPy capstone pefile lz4 pycryptodome frida frida-tools
+(cd tools/spine && [ -d node_modules ] || timeout 600 npm install --silent --no-audit --no-fund)
 echo "setup ok"

@@ -205,14 +205,20 @@ def run(items, out_dir, literals=()):
         dec, layers, kind = peel(raw, ring)
         dest = ""
         if kind != "unity-bundle":
-            stem = os.path.splitext(name)[0] if layers or kind in TEXT_EXT[:5] else name
-            ext = "." + kind if kind in TEXT_EXT else ""
+            stem = os.path.splitext(name)[0] if layers or kind in TEXT_EXT[:5] + ("lua-bytecode",) else name
+            ext = "." + kind if kind in TEXT_EXT else ".luac" if kind == "lua-bytecode" else ""
             dest = stem if stem.endswith(ext) else stem + ext
             full = os.path.join(out_dir, dest)
             os.makedirs(os.path.dirname(full), exist_ok=True)
             with open(full, "wb") as fh:
                 fh.write(dec)
         rows.append((name, " > ".join(layers) or "-", kind, len(raw), dest))
+    bytecode = [os.path.join(out_dir, r[4]) for r in rows if r[2] == "lua-bytecode"]
+    if bytecode:
+        from udk import luadec
+        ok, bad = luadec.decompile_files(bytecode)
+        rows = [r if r[2] != "lua-bytecode" else r[:2] + ("lua-bytecode -> .lua" if os.path.exists(
+            os.path.join(out_dir, r[4][:-5] + ".lua")) else "lua-bytecode (unluac failed)",) + r[3:] for r in rows]
     with open(os.path.join(out_dir, "report.tsv"), "w", encoding="utf-8") as fh:
         fh.write("path\tlayers\tkind\tbytes\tdecoded\n")
         for r in rows:
