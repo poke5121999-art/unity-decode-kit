@@ -324,6 +324,11 @@ def cmd_prefab(a):
     prefab.print_prefab(dump_root(a), a.spec, a.n, a.v)
 
 
+def cmd_objects(a):
+    from udk import prefab
+    prefab.find_objects(dump_root(a), a.name, a.n)
+
+
 def cmd_type(a):
     root = dump_root(a)
     rx = re.compile(r"^(public|internal|private|protected)?[\w ]*\b(class|struct|enum|interface) " + re.escape(a.name) + r"\b")
@@ -380,10 +385,14 @@ def main():
     p.add_argument("field", nargs="?", help="regex over top-level field names")
     p.set_defaults(fn=cmd_settings)
     p = sub.add_parser("prefab")
-    p.add_argument("spec", help="regex over prefab/scene paths")
+    p.add_argument("spec", help="regex over prefab/scene (.unity) paths; materials show their shader")
     p.add_argument("-n", type=int, default=1)
     p.add_argument("-v", action="store_true", help="also print short scalar fields")
     p.set_defaults(fn=cmd_prefab)
+    p = sub.add_parser("objects", help="find GameObjects by name in every prefab and scene")
+    p.add_argument("name", help="regex over GameObject names (whole name)")
+    p.add_argument("-n", type=int, default=50)
+    p.set_defaults(fn=cmd_objects)
     p = sub.add_parser("type")
     p.add_argument("name")
     p.set_defaults(fn=cmd_type)

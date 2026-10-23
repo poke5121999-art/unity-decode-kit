@@ -164,3 +164,42 @@ def print_prefab(root, spec, n=1, verbose=False):
         print("\n".join(describe(os.path.join(project, rel), guids, verbose, project)))
     if len(hits) > n:
         print(f"... {len(hits) - n} more matches: " + ", ".join(os.path.basename(h) for h in hits[n:n + 8]))
+
+
+def find_objects(root, name_rx, n=50):
+    """GameObjects whose name matches name_rx in every prefab and scene: asset and hierarchy path."""
+    import subprocess
+    project = os.path.join(root, "assets", "ExportedProject")
+    rg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "third_party", "rg")
+    r = subprocess.run([rg, "-l", "-g", "*.prefab", "-g", "*.unity", "-P", rf"^  m_Name: (?:{name_rx})\s*$", project],
+                       capture_output=True, text=True)
+    rx = re.compile(rf"^(?:{name_rx})$")
+    shown = 0
+    for path in sorted(r.stdout.split("\n")):
+        if not path:
+            continue
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            objs = parse(fh.read())
+        tr = {}
+        for fid, o in objs.items():
+            if o["type"] in ("Transform", "RectTransform"):
+                g = LOCAL_RE.search(o["fields"].get("m_GameObject", ""))
+                f = LOCAL_RE.search(o["fields"].get("m_Father", ""))
+                if g:
+                    tr[g.group(1)] = (fid, f.group(1) if f else "0")
+        go_of_tr = {t: g for g, (t, _) in tr.items()}
+
+        def path_of(go):
+            parts = []
+            while go:
+                parts.append(objs.get(go, {}).get("fields", {}).get("m_Name", "?"))
+                father = tr.get(go, (None, "0"))[1]
+                go = go_of_tr.get(father) if father != "0" else None
+            return "/".join(reversed(parts))
+        for fid, o in objs.items():
+            if o["type"] == "GameObject" and rx.match(o["fields"].get("m_Name", "")):
+                print(f"{os.path.relpath(path, project)}\t{path_of(fid)}")
+                shown += 1
+                if shown >= n:
+                    print(f"... more; raise -n")
+                    return
