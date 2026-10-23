@@ -67,7 +67,7 @@ def find_layout(game):
     if not loose:
         # Android: StreamingAssets are the APK's (and asset packs') assets/ folders.
         loose = sorted(os.path.dirname(b) for b in glob.glob(os.path.join(game, "**", "assets", "bin"), recursive=True))
-    return {"game": game, "binary": binary, "metadata": meta, "data_dir": data_dir, "loose": loose}
+    return {"game": game, "binary": binary, "game_binary": binary, "metadata": meta, "data_dir": data_dir, "loose": loose}
 
 
 def run(cmd, timeout, logfile, min_free_gb=0):
@@ -238,13 +238,48 @@ def step_normalize(L, out, game_re):
     if not os.path.exists(d + ".log"):
         run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.normalize", L["game"], d],
             12 * 3600, os.path.join(out, "logs", "normalize.log"), min_free_gb=10)
-    for src, rel in il2cpp_places(L, out):
+    places = il2cpp_places(L, out)
+    for src, rel in places:
         dst = os.path.join(d, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.lexists(dst):
             os.remove(dst)
         shutil.copy2(src, dst)
         log(f"normalized: {rel} <- {os.path.relpath(src, out) if src.startswith(out) else src}")
+    root = merge_splits(d, places[0][1])
+    if root:
+        with open(d + ".root", "w") as fh:
+            fh.write(root)
+
+
+def merge_splits(mirror, meta_rel):
+    """Fold a split package (xapk: base apk, config apks, asset packs) into the base apk's tree, the
+    way a device sees it after install: every split's assets/ and lib/ go under the base. AssetRipper
+    reports a "Mixed game structure" (and no scripting backend) for the unmerged folders. Returns the
+    base folder, or None for a package that is not split."""
+    marker = os.path.join("assets", "bin", "Data")
+    if marker not in meta_rel:
+        return None
+    base = meta_rel.split(marker)[0].strip(os.sep)
+    tops = [t for t in os.listdir(mirror) if t != base and os.path.isdir(os.path.join(mirror, t))]
+    if not base or not tops:
+        return None
+    clashes = 0
+    for t in tops:
+        for sub in ("assets", "lib"):
+            src_root = os.path.join(mirror, t, sub)
+            for d, _, fs in os.walk(src_root):
+                for f in fs:
+                    src = os.path.join(d, f)
+                    dst = os.path.join(mirror, base, sub, os.path.relpath(src, src_root))
+                    if os.path.lexists(dst):
+                        clashes += 1
+                        continue
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    os.rename(src, dst)
+        shutil.rmtree(os.path.join(mirror, t))
+    log(f"normalized: merged {len(tops)} split folders into {base} ({clashes} duplicate paths kept from the base)")
+    return os.path.join(mirror, base)
 
 
 def il2cpp_places(L, out):
@@ -252,18 +287,19 @@ def il2cpp_places(L, out):
     from out/inspector; a split Android package (xapk) keeps libil2cpp.so in a config apk, so it is
     placed under the base apk's lib/<abi>/, where AssetRipper's IL2CPP detection looks."""
     fixed_meta = os.path.join(out, "inspector", "global-metadata.dat")
-    fixed_bin = os.path.join(out, "inspector", os.path.basename(L["binary"]))
+    original = L["game_binary"]  # L["binary"] may already point at the repaired copy in out/inspector
+    fixed_bin = os.path.join(out, "inspector", os.path.basename(original))
     meta_rel = os.path.relpath(L["metadata"], L["game"])
     places = [(fixed_meta if os.path.exists(fixed_meta) else L["metadata"], meta_rel)]
-    binary = fixed_bin if os.path.exists(fixed_bin) else L["binary"]
+    binary = fixed_bin if os.path.exists(fixed_bin) else original
     marker = os.path.join("assets", "bin", "Data")
     if marker in meta_rel:
         base = meta_rel.split(marker)[0]
-        abi = os.path.basename(os.path.dirname(L["binary"]))
-        places.append((binary, os.path.join(base, "lib", abi, os.path.basename(L["binary"]))))
-        places.append((binary, os.path.relpath(L["binary"], L["game"])))  # no protected copy left behind
+        abi = os.path.basename(os.path.dirname(original))
+        places.append((binary, os.path.join(base, "lib", abi, os.path.basename(original))))
+        places.append((binary, os.path.relpath(original, L["game"])))  # no protected copy left behind
     else:
-        places.append((binary, os.path.relpath(L["binary"], L["game"])))
+        places.append((binary, os.path.relpath(original, L["game"])))
     return places
 
 
@@ -278,6 +314,9 @@ def step_assets(L, out, game_re):
         os.makedirs(d, exist_ok=True)
         normalized = os.path.join(out, "normalized")
         src = normalized if os.path.exists(normalized + ".log") else L["game"]
+        if os.path.exists(normalized + ".root"):
+            with open(normalized + ".root") as fh:
+                src = fh.read().strip()
         # AssetRipper empties its target folder first, so its logs live in out/logs.
         run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.assetripper", ASSETRIPPER, src, d,
              os.path.join(out, "logs")], 8 * 3600, os.path.join(out, "logs", "assetripper-run.log"), min_free_gb=9)
