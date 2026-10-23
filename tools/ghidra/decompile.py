@@ -1,5 +1,7 @@
 # Headless PyGhidra script: decompile every method of the game assemblies into one C file per type.
-# Args: <inspector_ghidra_dir> <game_assembly_regex> <out_dir> [workers] [type_regex]
+# Args: <inspector_ghidra_dir> <game_assembly_regex> <out_dir> [workers] [type_regex] [budget_seconds]
+# Resumable: a type whose .c file exists is read back, not decompiled again. With a budget the run
+# stops starting new types after that many seconds and prints "remaining N types"; rerun to continue.
 # Output: <out_dir>/<Assembly>/<Namespace path>/<Type>.c and <out_dir>/methods.tsv
 # (name, .NET signature, address, file, line) so `udk method` can jump straight to a body.
 import json
@@ -16,7 +18,8 @@ from ghidra.util.task import ConsoleTaskMonitor
 args = list(getScriptArgs())
 inspector_dir, game_re, out_dir = args[:3]
 workers = int(args[3]) if len(args) > 3 else 4
-type_re = re.compile(args[4]) if len(args) > 4 else None
+type_re = re.compile(args[4]) if len(args) > 4 and args[4] else None
+budget = float(args[5]) if len(args) > 5 else 0.0
 game_re = re.compile(game_re)
 t0 = time.time()
 
@@ -51,6 +54,7 @@ jobs = sorted(by_type.items())
 lock = threading.Lock()
 rows = []
 done = [0]
+left = [0]
 
 
 def worker(chunk):
@@ -62,6 +66,19 @@ def worker(chunk):
     for group, methods in chunk:
         rel = group.replace(".dll/", "/", 1).replace("<", "_").replace(">", "_") + ".c"
         path = os.path.join(out_dir, rel)
+        if os.path.exists(path):  # done by an earlier run: rebuild its index rows from the headers
+            with open(path, encoding="utf-8") as fh:
+                at = {line: i + 1 for i, line in enumerate(fh.read().split("\n")) if line.startswith("// ") and "  @0x" in line}
+            local_rows = [(m["signature"].split("(")[0].split()[-1], m["dotNetSignature"], m["virtualAddress"], rel,
+                           at.get(f"// {m['dotNetSignature']}  @{m['virtualAddress']}", 1)) for m in methods]
+            with lock:
+                rows.extend(local_rows)
+                done[0] += 1
+            continue
+        if budget and time.time() - t0 > budget:
+            with lock:
+                left[0] += 1
+            continue
         os.makedirs(os.path.dirname(path), exist_ok=True)
         lines = []
         local_rows = []
@@ -79,8 +96,9 @@ def worker(chunk):
                 continue
             lines.extend(res.getDecompiledFunction().getC().strip("\n").split("\n"))
             lines.append("")
-        with open(path, "w", encoding="utf-8") as fh:
+        with open(path + ".part", "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
+        os.replace(path + ".part", path)  # a type's file exists only once it is complete
         with lock:
             rows.extend(local_rows)
             done[0] += 1
@@ -100,4 +118,7 @@ with open(os.path.join(out_dir, "methods.tsv"), "w", encoding="utf-8") as fh:
     fh.write("c_name\tsignature\taddress\tfile\tline\n")
     for r in sorted(rows):
         fh.write("\t".join(map(str, r)) + "\n")
-log(f"done, {len(rows)} methods")
+if left[0]:
+    log(f"remaining {left[0]} types")
+else:
+    log(f"done, {len(rows)} methods")

@@ -249,7 +249,11 @@ def step_ghidra(L, out, game_re):
             open(marker).read().strip() == want:
         return
     code = final + ".next"  # the old output stays readable until the new one is complete
-    shutil.rmtree(code, ignore_errors=True)
+    if read_text(os.path.join(code, "want")) != want:  # a partial run for the same output is continued
+        shutil.rmtree(code, ignore_errors=True)
+        os.makedirs(code)
+        with open(os.path.join(code, "want"), "w") as fh:
+            fh.write(want + "\n")
     if not game_re:
         names = game_assemblies(out)
         log(f"game assemblies: {', '.join(names)}")
@@ -267,9 +271,17 @@ def step_ghidra(L, out, game_re):
             4 * 3600, os.path.join(proj, "prepare.log"), min_free_gb=8)
         with open(prepared, "w") as fh:
             fh.write(imported + "\n")
-    run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6"]
-        + ([L["types"]] if L.get("types") else []),
-        6 * 3600, os.path.join(proj, "decompile.log"), min_free_gb=6)
+    # Turns of at most ~50 minutes: between them the heavy-job queue lets other work run, and a killed
+    # turn loses one type at most (the script resumes from the files already written).
+    for turn in range(1, 100):
+        run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6",
+                    L.get("types") or "", "3000"],
+            5400, os.path.join(proj, "decompile.log"), min_free_gb=6)
+        last = read_text(os.path.join(proj, "decompile.log")).splitlines()[-1:]
+        if not (last and "remaining" in last[0]):
+            break
+        log(f"ghidra: turn {turn}: {last[0].split('] ', 1)[-1]}")
+    os.remove(os.path.join(code, "want"))
     shutil.move(os.path.join(code, "methods.tsv"), os.path.join(out, "code", "methods.tsv.next"))
     if os.path.isdir(final):
         os.rename(final, final + ".old")
