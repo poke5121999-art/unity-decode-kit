@@ -270,13 +270,18 @@ def il2cpp_places(L, out):
 def step_assets(L, out, game_re):
     from udk import assets
     d = os.path.join(out, "assets")
-    if not os.path.isdir(os.path.join(d, "ExportedProject")):
+    done = os.path.join(out, "logs", "assets.done")  # an interrupted export leaves a partial folder
+    if not os.path.exists(done):
+        for x in ("ExportedProject", "refs.tsv", "guids.tsv"):
+            p = os.path.join(d, x)
+            shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else (os.path.exists(p) and os.remove(p))
         os.makedirs(d, exist_ok=True)
         normalized = os.path.join(out, "normalized")
         src = normalized if os.path.exists(normalized + ".log") else L["game"]
         # AssetRipper empties its target folder first, so its logs live in out/logs.
         run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.assetripper", ASSETRIPPER, src, d,
-             os.path.join(out, "logs")], 4 * 3600, os.path.join(out, "logs", "assetripper-run.log"), min_free_gb=9)
+             os.path.join(out, "logs")], 8 * 3600, os.path.join(out, "logs", "assetripper-run.log"), min_free_gb=9)
+        open(done, "w").close()
     spine_dir = os.path.join(KIT, "tools", "spine")
     if not os.path.isdir(os.path.join(spine_dir, "node_modules")):
         subprocess.run(["npm", "install", "--silent", "--no-audit", "--no-fund"], cwd=spine_dir, timeout=600, check=True)
