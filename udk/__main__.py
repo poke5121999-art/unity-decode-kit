@@ -151,6 +151,28 @@ def native_functions(root, spec):
     return out
 
 
+def const_string_labels(root, typ, member):
+    """Decomp labels of the string literal a `const string` field holds (empty when it is not one)."""
+    r = subprocess.run([RG, "-n", "-P", rf"\bconst string {re.escape(member)} = (\".*\");", os.path.join(root, "code", "types.cs")],
+                       capture_output=True, text=True).stdout.splitlines()
+    if not r:
+        return []
+    values = set()
+    with open(os.path.join(root, "code", "types.cs"), encoding="utf-8", errors="replace") as fh:
+        lines = fh.read().split("\n")
+    for hit in r:
+        no = int(hit.split(":", 1)[0]) - 1
+        owner = next((re.search(r"\b(?:class|struct) (\w+)", lines[i]) for i in range(no, -1, -1)
+                      if re.search(r"\b(?:class|struct) \w+", lines[i]) and "(" not in lines[i]), None)
+        if owner and owner.group(1) == typ:
+            values.add(json.loads(re.search(r" = (\".*\");", lines[no]).group(1)))
+    path = os.path.join(root, "code", "strings.tsv")
+    if not values or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        return [row[0] for row in (line.rstrip("\n").split("\t") for line in fh) if len(row) == 3 and row[2] in values]
+
+
 def cmd_callers(a):
     """Methods that call Type.Method (or a property's get_/set_), or touch the field Type.field."""
     root = dump_root(a)
@@ -171,6 +193,9 @@ def cmd_callers(a):
            rf"|retype: \w+: {short}; 0x[0-9a-f]+ = {re.escape(field)}\b"] if field else []
     if names:
         rxs.append(rf"(?<![A-Za-z0-9]){re.escape(t)}__({'|'.join(map(re.escape, names))})(?!_b__\d)(_\w*)?\b")
+    labels = const_string_labels(root, typ.split(".")[-1], member) if field else []
+    if labels:  # a const string is copied into each use: find the literal instead of the field
+        rxs.append(rf"\b_?(?:{'|'.join(map(re.escape, labels))})\b")
     out = []
     for rx in rxs:
         out += subprocess.run([RG, "-n", "-P", rx, os.path.join(root, "code", "decomp")],
