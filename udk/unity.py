@@ -160,7 +160,7 @@ def write_manifest(export, project, swaps, pkgs, rules):
             if pkgs[name].version != ver:
                 rows.append(("package-bumped", name, f"{ver} -> {pkgs[name].version}"))
         elif name.startswith("com.unity.modules."):
-            out[name] = "1.0.0"
+            rows.append(("package-dropped", name, "built-in module the target editor no longer has"))
         else:
             out[name] = ver
     for _, name, version, _, _ in swaps:
