@@ -71,6 +71,33 @@ def conform(value, node):
     return {c.m_Name: conform(value[c.m_Name], c) if c.m_Name in value else default(c) for c in node.m_Children}
 
 
+def read_tree(o, node):
+    """Read an object with its own tree. A tree holding m_ModuleActiveBits (the patched engine's
+    ParticleSystem) serializes InitialModule always and every later module k only when bit k-1 is
+    set; absent modules get defaults. Measured: 40/40 ParticleSystems of one bundle end exactly at
+    their byte size under this rule, none under any other offset."""
+    names = [c.m_Name for c in node.m_Children]
+    if "m_ModuleActiveBits" not in names:
+        return o.read_typetree(nodes=node)
+    from UnityPy.helpers.TypeTreeHelper import TypeTreeConfig, read_value
+    r = o.reader
+    r.Position = o.byte_start
+    cfg = TypeTreeConfig(True, o.assets_file, False)
+    tree, bits, module = {}, 0, -1
+    for c in node.m_Children:
+        if c.m_Name.endswith("Module") and c.m_Type.endswith("Module"):
+            module += 1
+            if module > 0 and not (bits >> (module - 1)) & 1:
+                tree[c.m_Name] = default(c)
+                continue
+        tree[c.m_Name] = read_value(c, r, cfg)
+        if c.m_Name == "m_ModuleActiveBits":
+            bits = tree[c.m_Name]
+    if r.Position - o.byte_start != o.byte_size:
+        raise ValueError(f"module mask read {r.Position - o.byte_start} of {o.byte_size} bytes")
+    return tree
+
+
 def same(a, b):
     if a.m_Name != b.m_Name or a.m_Type != b.m_Type or len(a.m_Children) != len(b.m_Children):
         return False
@@ -117,7 +144,7 @@ def normalize_file(src, dst):
             continue
         _, orig, stock = entry
         try:
-            tree = o.read_typetree(nodes=orig)
+            tree = read_tree(o, orig)
             o.save_typetree(conform(tree, stock), nodes=stock)
         except Exception as e:  # noqa: BLE001 - keep the original object; AssetRipper will report it
             changed.setdefault("errors", []).append(f"{o.type.name} {o.path_id}: {type(e).__name__}: {e}"[:200])
@@ -176,5 +203,5 @@ def run(src_root, dst_root, workers=6):
 
 
 if __name__ == "__main__":
-    n, r, totals, errors = run(sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 6)
+    n, r, totals, errors = run(sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else max(2, os.cpu_count() - 2))
     print(f"[normalize] {n} files, {r} rewritten; objects per class {totals}; {len(errors)} errors")

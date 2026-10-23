@@ -232,8 +232,8 @@ def step_normalize(L, out, game_re):
     (udk/normalize.py), and the repaired IL2CPP pair placed where a standard build keeps it."""
     d = os.path.join(out, "normalized")
     if not os.path.exists(d + ".log"):
-        run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.normalize", L["game"], d, "6"],
-            6 * 3600, os.path.join(out, "logs", "normalize.log"), min_free_gb=8)
+        run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.normalize", L["game"], d],
+            12 * 3600, os.path.join(out, "logs", "normalize.log"), min_free_gb=10)
     for src, rel in il2cpp_places(L, out):
         dst = os.path.join(d, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
