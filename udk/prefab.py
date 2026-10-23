@@ -171,9 +171,12 @@ def find_objects(root, name_rx, n=50):
     import subprocess
     project = os.path.join(root, "assets", "ExportedProject")
     rg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "third_party", "rg")
-    r = subprocess.run([rg, "-l", "-g", "*.prefab", "-g", "*.unity", "-P", rf"^  m_Name: (?:{name_rx})\s*$", project],
+    # Leading inline flags such as (?i) must stay at the start once the pattern is wrapped, and the
+    # wrapper anchors the whole name, so the user's own ^ and $ are dropped.
+    flags, body = re.match(r"((?:\(\?[aiLmsux]+\))*)\^?(.*?)(?<!\\)\$?$", name_rx, re.S).groups()
+    r = subprocess.run([rg, "-l", "-g", "*.prefab", "-g", "*.unity", "-P", rf"{flags}^  m_Name: (?:{body})\s*$", project],
                        capture_output=True, text=True)
-    rx = re.compile(rf"^(?:{name_rx})$")
+    rx = re.compile(rf"{flags}^(?:{body})$")
     shown = 0
     for path in sorted(r.stdout.split("\n")):
         if not path:

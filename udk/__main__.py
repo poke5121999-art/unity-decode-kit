@@ -23,6 +23,7 @@ RG = os.path.join(KIT, "third_party", "rg")
 KINDS = {
     "code": "code/decomp",
     "types": "code/types.cs",
+    "strings": "code/strings.tsv",
     "data": "data",
     "assets": "assets/ExportedProject/Assets",
     "audio": "audio",

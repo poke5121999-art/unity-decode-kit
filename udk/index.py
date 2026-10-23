@@ -45,7 +45,26 @@ def extras(out):
     return rows
 
 
+def string_table(out):
+    """code/strings.tsv: every string literal the code uses, with the label it carries in the decomp,
+    so `udk q -k strings` finds names loaded by string (paths, prefab names, config keys)."""
+    meta = os.path.join(out, "inspector", "metadata.json")
+    dst = os.path.join(out, "code", "strings.tsv")
+    if not os.path.exists(meta) or (os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(meta)):
+        return
+    import json
+    with open(meta, encoding="utf-8") as fh:
+        lits = json.load(fh)["addressMap"].get("stringLiterals", [])
+    esc = str.maketrans({"\t": "\\t", "\n": "\\n", "\r": "\\r"})
+    with open(dst + ".part", "w", encoding="utf-8") as fh:
+        fh.write("label\taddress\tstring\n")
+        for e in lits:
+            fh.write(f"{e['name']}\t{e['virtualAddress']}\t{e.get('string', '').translate(esc)}\n")
+    os.replace(dst + ".part", dst)
+
+
 def write(out, layout):
+    string_table(out)
     code = os.path.join(out, "code")
     methods = count_lines(os.path.join(code, "methods.tsv"))
     failed = bad = retyped = 0
@@ -87,10 +106,13 @@ def write(out, layout):
         "udk callers Type.Member    # methods that call a method or touch a field/property",
         "udk prefab '<regex>'       # prefab/scene hierarchy, components, what each field points at",
         "udk settings PlayerSettings [field regex]   # project settings as shipped",
+        "udk q '<text>' -k strings  # string literals in code; then udk q <label> -k code for who uses one",
+        "udk asset '<regex>' / udk objects '<name regex>'   # raw asset YAML / GameObjects by name",
         "```",
         "",
         "## Contents",
         "",
+        f"- `code/strings.tsv`: {count_lines(os.path.join(code, 'strings.tsv'))} string literals with their decomp labels.",
         f"- `code/types.cs`: every type, field (with offset), property, method address (Il2CppInspectorRedux).",
         f"- `code/decomp/`: {methods} game methods decompiled by Ghidra, one `.c` per type, {failed} failed, {bad} with 'bad instruction data'. "
         f"{retyped} lines carry `/* retype: v: T; 0xNN = field */`, the real field behind a value typed by shared generic code. Index `code/methods.tsv`.",
