@@ -139,6 +139,70 @@ def fix_case_clashes(root):
     return moved
 
 
+IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+NS_DECL = re.compile(r"^namespace (.*)$", re.M)
+DOTTED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+CLASS_DECL = re.compile(r"^(\s*(?:public |internal )?(?:sealed |abstract |static )*(?:partial )?class )(\S+)", re.M)
+
+
+def referenced_guids(root):
+    """Every guid a YAML asset under root points at."""
+    out = set()
+    pat = re.compile(rb"guid: ([0-9a-f]{32})")
+    for d, _, fs in os.walk(root):
+        for f in fs:
+            if os.path.splitext(f)[1] in YAML_EXT:
+                with open(os.path.join(d, f), "rb") as fh:
+                    out.update(m.decode() for m in pat.findall(fh.read()))
+    return out
+
+
+def valid_name(s):
+    s = re.sub(r"\W", "_", s)
+    return "_" + s if not s or s[0].isdigit() else s
+
+
+def fix_invalid_stubs(root):
+    """AssetRipper names a stub class and namespace after its MonoScript, which can be no C#
+    identifier (class QSMRenderPipeline.Constants, class 1.Example, namespace GCloud.). Unreferenced
+    ones are removed; a referenced one gets valid names and keeps its .meta guid. Returns [(path, action)]."""
+    used = referenced_guids(root)
+    done = []
+    for d, _, fs in os.walk(os.path.join(root, "Scripts")):
+        for f in fs:
+            if not f.endswith(".cs"):
+                continue
+            p = os.path.join(d, f)
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            m = CLASS_DECL.search(text)
+            ns = NS_DECL.search(text)
+            bad_ns = ns and not DOTTED.match(ns.group(1).strip())
+            if not m or (IDENT.match(m.group(2)) and not bad_ns):
+                continue
+            meta = p + ".meta"
+            g = None
+            if os.path.exists(meta):
+                with open(meta, encoding="utf-8", errors="replace") as fh:
+                    gm = GUID.search(fh.read())
+                g = gm.group(1) if gm else None
+            if g not in used:
+                os.remove(p)
+                if os.path.exists(meta):
+                    os.remove(meta)
+                done.append((os.path.relpath(p, root), "removed (invalid class or namespace name, unreferenced)"))
+            else:
+                name = valid_name(m.group(2))
+                text = text[:m.start(2)] + name + text[m.end(2):]
+                if bad_ns:
+                    space = ".".join(valid_name(x) for x in ns.group(1).strip().split(".") if x) or "Stub"
+                    text = text[:ns.start(1)] + space + text[ns.end(1):]
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                done.append((os.path.relpath(p, root), f"renamed to {name}" + (f" in namespace {space}" if bad_ns else "")))
+    return done
+
+
 def exported_scripts(asm_dir):
     """{(namespace, class): guid} for an exported assembly folder."""
     out = {}
@@ -318,6 +382,7 @@ def upgrade(export, project, version, refs_tsv=None, root_patterns=()):
     rows += write_manifest(export, project, swaps, pkgs, rules)
     rows.append(("guid-remap", "files", str(remap_guids(dst_assets, remap))))
     rows += [("case-clash-moved", p, "path differed only in letter case") for p in fix_case_clashes(dst_assets)]
+    rows += [("stub-fixed", p, what) for p, what in fix_invalid_stubs(dst_assets)]
     with open(os.path.join(project, "UpgradeReport.tsv"), "w", encoding="utf-8") as fh:
         fh.write("kind\tsubject\tdetail\n")
         for r in rows:

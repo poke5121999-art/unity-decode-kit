@@ -155,9 +155,10 @@ def repair(src, dst, game_dir):
     for start in range(0, len(b), period):
         for j, on in enumerate(mask):
             lo = start + j * GRAIN
-            if start == 0 and not on:
+            if (start == 0 or start + period > len(b)) and not on:
                 # The first period is laid out differently (the region after the header, before
-                # the first masked slot, is XOR'd too), so decide its cells one by one.
+                # the first masked slot, is XOR'd too), and so is a short last one (Soul Knight
+                # XORs its tail past the masked slots), so decide their cells one by one.
                 lo = max(lo, first)
                 cell = b[lo:start + (j + 1) * GRAIN]
                 on = len(cell) > 0 and cell.count(key) > cell.count(0)

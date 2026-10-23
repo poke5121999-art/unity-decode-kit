@@ -84,9 +84,22 @@ def run(cmd, timeout, logfile, min_free_gb=0):
         sys.exit(f"{cmd[0]} exited {r.returncode}; see {logfile}")
 
 
+BINARY_FORMAT = "2: xor windows undone, moved windows put back"
+
+
+def read_text(path):
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as fh:
+        return fh.read().strip()
+
+
 def step_inspector(L, out, game_re):
     d = os.path.join(out, "inspector")
-    if os.path.exists(os.path.join(d, "metadata.json")):
+    have = os.path.exists(os.path.join(d, "metadata.json"))
+    marker = os.path.join(d, "binary.format")
+    repaired = os.path.join(d, os.path.basename(L["game_binary"]))
+    if have and not (os.path.exists(repaired) and read_text(marker) != BINARY_FORMAT):
         return
     os.makedirs(d, exist_ok=True)
     from udk import metadata
@@ -97,6 +110,12 @@ def step_inspector(L, out, game_re):
         log(f"metadata repaired: {how}")
         meta = fixed
     binary, meta = fix_binary(L, d, meta)
+    if binary != L["game_binary"]:
+        with open(marker, "w") as fh:
+            fh.write(BINARY_FORMAT + "\n")
+    if have:
+        log("inspector: repaired binary rewritten; Il2CppInspector output kept (it reads tables, not code)")
+        return
     run(INSPECTOR + ["-i", binary, "-m", meta, "-e", "none", "--select-outputs",
          "-c", os.path.join(d, "types.cs"), "-p", os.path.join(d, "il2cpp_ghidra.py"), "-t", "Ghidra",
          "-o", os.path.join(d, "metadata.json"), "-h", os.path.join(d, "cpp")],
@@ -113,6 +132,7 @@ def fix_binary(L, d, meta):
     if b[:4] != b"\x7fELF":
         return L["binary"], meta
     windows = elf.unxor_sections(b)
+    moved = elf.unshuffle_windows(b, windows)
     with open(meta, "rb") as fh:
         m = fh.read()
     import struct
@@ -154,7 +174,7 @@ def fix_binary(L, d, meta):
     with open(fixed, "wb") as fh:
         fh.write(b)
     log(f"module names repaired: {names}; invoker indices cleared: {invokers}")
-    log(f"binary repaired: xor windows {windows}; registration/types/neutralized {neutral}; null segments {dropped}")
+    log(f"binary repaired: xor windows {windows}; windows moved back (section, group, permutation, groups, votes) {moved}; registration/types/neutralized {neutral}; null segments {dropped}")
     L["binary"] = fixed
     return fixed, meta
 
@@ -197,7 +217,9 @@ DECOMP_FORMAT = "2: game methods + game generic instances"
 def step_ghidra(L, out, game_re):
     final = os.path.join(out, "code", "decomp")
     marker = os.path.join(out, "code", "decomp.format")
-    want = DECOMP_FORMAT + (f"; types {L['types']}" if L.get("types") else "")
+    bin_format = read_text(os.path.join(out, "inspector", "binary.format"))  # empty: no repair needed
+    want = DECOMP_FORMAT + (f"; types {L['types']}" if L.get("types") else "") + \
+        (f"; binary {bin_format}" if bin_format else "")
     if os.path.exists(os.path.join(out, "code", "methods.tsv")) and os.path.exists(marker) and \
             open(marker).read().strip() == want:
         return
@@ -211,10 +233,15 @@ def step_ghidra(L, out, game_re):
     os.makedirs(proj, exist_ok=True)
     py = os.path.join(KIT, ".venv", "bin", "pyghidra")
     base = [py, "-X", "mx14g", "--skip-analysis", "--project-path", proj, "--project-name", "p", L["binary"]]
-    if not os.path.exists(os.path.join(proj, "prepared")):
+    prepared = os.path.join(proj, "prepared")
+    if os.path.exists(prepared) and read_text(prepared) != bin_format:
+        shutil.rmtree(proj)  # the project holds a copy of the binary's bytes; an older repair is stale
+        os.makedirs(proj)
+    if not os.path.exists(prepared):
         run(base + [os.path.join(KIT, "tools", "ghidra", "prepare.py"), os.path.join(out, "inspector"), game_re],
             4 * 3600, os.path.join(proj, "prepare.log"), min_free_gb=8)
-        open(os.path.join(proj, "prepared"), "w").close()
+        with open(prepared, "w") as fh:
+            fh.write(bin_format + "\n")
     run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6"]
         + ([L["types"]] if L.get("types") else []),
         6 * 3600, os.path.join(proj, "decompile.log"), min_free_gb=6)

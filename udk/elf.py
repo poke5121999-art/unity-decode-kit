@@ -115,7 +115,101 @@ def unxor_sections(b, min_gain=0.002):
                 b[a:e] = bytes(b[a:e]).translate(table)
                 applied += 1
         skipped = len(cells) - applied
-        done.append((hex(off), size, hex(key), int(mask.sum()), applied, skipped))
+        on = np.nonzero(mask)[0]
+        window = (int(on[0]) * GRAIN, (int(on[-1]) + 1) * GRAIN) if on[-1] - on[0] + 1 == len(on) else None
+        done.append((hex(off), size, hex(key), int(mask.sum()), applied, skipped, window))
+    return done
+
+
+SHT_ARM_EXIDX = 0x70000001
+
+
+def exidx_starts(b):
+    """Function start addresses from .ARM.exidx (ARM32 unwind index: a prel31 offset per function)."""
+    import numpy as np
+    is64, end, _, _, _, _, shoff, shentsize, shnum, sh = _layout(b)
+    if is64:
+        return np.zeros(0, dtype=np.int64)
+    for i in range(shnum):
+        f = struct.unpack_from(sh, b, shoff + i * shentsize)
+        if f[1] == SHT_ARM_EXIDX:
+            addr, off, size = f[3], f[4], f[5]
+            w = np.frombuffer(bytes(b[off:off + size - size % 8]), dtype="<u4").reshape(-1, 2)[:, 0].astype(np.int64)
+            rel = np.where(w & 0x40000000, (w & 0x7FFFFFFF) - 0x80000000, w & 0x7FFFFFFF)
+            return np.unique((addr + 8 * np.arange(len(w)) + rel) & 0xFFFFFFFF)
+    return np.zeros(0, dtype=np.int64)
+
+
+def unshuffle_windows(b, windows, period=1 << 16, max_group=16):
+    """Put back XOR windows that the protector also moved between blocks, in place.
+
+    Seen (Zing Speed, il2cpp code section): in every group of 8 64 KB blocks, block j's window holds
+    the code of block perm[j]. Function starts from .ARM.exidx are not moved, so the window holding
+    block B's code has push prologues exactly at B's starts. Each block votes for the block whose
+    starts its prologues match; the smallest group size whose per-slot votes agree gives the
+    permutation, applied to every whole group inside the section. ARM32 only (needs .ARM.exidx and
+    file offset = address in code). Returns (section offset, group size, permutation, groups moved,
+    blocks agreeing/voting) per section changed."""
+    import collections
+    import numpy as np
+    starts = exidx_starts(b)
+    if not len(starts):
+        return []
+    done = []
+    for sec, size, *_, window in windows:
+        if window is None:
+            continue  # the window wraps around the block edge; not seen moved
+        off = int(sec, 16)
+        lo, hi = window
+        first = -(-(off - lo) // period) * period
+        blocks = list(range(first, off + size - hi + 1, period))
+        if len(blocks) < 2 * max_group:
+            continue
+        a = off - off % 4
+        w = np.frombuffer(bytes(b[a:off + size - (off + size) % 4]), dtype="<u4").astype(np.int64)
+        push = a + 4 * np.nonzero((w & 0xFFFF0000) == 0xE92D0000)[0]
+
+        def by_block(addrs):
+            d = collections.defaultdict(set)
+            for x in addrs.tolist():
+                r = x % period
+                if lo <= r < hi:
+                    d[x - r].add(r)
+            return d
+        P, E = by_block(push), by_block(starts[(starts >= off) & (starts < off + size)])
+        if sum(len(v) for v in E.values()) < 100:
+            continue  # not a code section with unwind entries
+        votes = {}
+        for blk in blocks:
+            score = sorted(((len(P[blk] & E[blk + d * period]), d) for d in range(-max_group, max_group + 1)), reverse=True)
+            (n, d), (n2, _) = score[0], score[1]
+            if n >= 3 and n >= 2 * n2:
+                votes[blk] = d
+        if not votes or all(d == 0 for d in votes.values()):
+            continue
+        best = None
+        for g in range(1, max_group + 1):
+            slot = collections.defaultdict(collections.Counter)
+            for blk, d in votes.items():
+                slot[(blk // period) % g][d] += 1
+            perm = {j: j + c.most_common(1)[0][0] for j, c in slot.items()}
+            agree = sum(c.most_common(1)[0][1] for c in slot.values())
+            if len(perm) == g and sorted(perm.values()) == list(range(g)) and agree >= 0.95 * len(votes):
+                best = (g, [perm[j] for j in range(g)], agree)
+                break
+        if not best:
+            continue
+        g, perm, agree = best
+        if perm == list(range(g)):
+            continue
+        src = bytes(b)
+        moved = 0
+        for gs in range(-(-blocks[0] // (g * period)) * g * period, blocks[-1] - (g - 1) * period + 1, g * period):
+            for j, t in enumerate(perm):
+                x, y = gs + j * period, gs + t * period
+                b[y + lo:y + hi] = src[x + lo:x + hi]
+            moved += 1
+        done.append((sec, g, perm, moved, f"{agree}/{len(votes)}"))
     return done
 
 
