@@ -123,7 +123,7 @@ class KeyRing:
         return best if best[0] is not None else (None, 0.0)
 
 
-FORMAT = "3: hash-indexed string tables to TSV"  # bump when decoding changes, so old dumps redo the data step
+FORMAT = "4: + behaviac trees to XML"  # bump when decoding changes, so old dumps redo the data step
 GOOD_TEXT = 0.8  # share of everyday bytes in real CSV/JSON/Lua text; garbage that prints scores lower
 
 
@@ -215,6 +215,14 @@ def peel(b, ring=None, depth=0):
                 text = None
             out, layers, kind = peel(xor_key(b, text, key), ring, depth + 1)
             return out, [f"xor key {key!r}" + (" per char" if text is not None else "")] + layers, kind
+    if depth == 0 and 8 <= len(b) < 1 << 22 and b[4] in (0x16, 0x1D) and struct.unpack_from("<i", b)[0] == len(b):
+        from udk import behaviac  # behaviac behavior tree or agent metadata (Tencent's BT runtime, BSON form)
+        try:
+            tree = behaviac.decode(b)
+            if tree["consumed"] == tree["size"]:
+                return behaviac.to_xml(tree).encode("utf-8"), ["behaviac bson"], "xml"
+        except Exception:  # noqa: BLE001 - not a behaviac document after all
+            pass
     table = string_table(b) if depth == 0 else None
     if table is not None:
         return table, ["string table"], "tsv"
