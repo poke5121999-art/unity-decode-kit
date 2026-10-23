@@ -188,8 +188,9 @@ DECOMP_FORMAT = "2: game methods + game generic instances"
 def step_ghidra(L, out, game_re):
     final = os.path.join(out, "code", "decomp")
     marker = os.path.join(out, "code", "decomp.format")
+    want = DECOMP_FORMAT + (f"; types {L['types']}" if L.get("types") else "")
     if os.path.exists(os.path.join(out, "code", "methods.tsv")) and os.path.exists(marker) and \
-            open(marker).read().strip() == DECOMP_FORMAT:
+            open(marker).read().strip() == want:
         return
     code = final + ".next"  # the old output stays readable until the new one is complete
     shutil.rmtree(code, ignore_errors=True)
@@ -205,7 +206,8 @@ def step_ghidra(L, out, game_re):
         run(base + [os.path.join(KIT, "tools", "ghidra", "prepare.py"), os.path.join(out, "inspector"), game_re],
             4 * 3600, os.path.join(proj, "prepare.log"), min_free_gb=8)
         open(os.path.join(proj, "prepared"), "w").close()
-    run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6"],
+    run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6"]
+        + ([L["types"]] if L.get("types") else []),
         6 * 3600, os.path.join(proj, "decompile.log"), min_free_gb=6)
     shutil.move(os.path.join(code, "methods.tsv"), os.path.join(out, "code", "methods.tsv.next"))
     if os.path.isdir(final):
@@ -214,7 +216,7 @@ def step_ghidra(L, out, game_re):
     os.replace(os.path.join(out, "code", "methods.tsv.next"), os.path.join(out, "code", "methods.tsv"))
     shutil.rmtree(final + ".old", ignore_errors=True)
     with open(marker, "w") as fh:
-        fh.write(DECOMP_FORMAT + "\n")
+        fh.write(want + "\n")
     from udk import code as code_mod
     found = code_mod.name_helpers(out)
     log(f"named runtime helpers: {', '.join(n for n, _ in found.values())}")
@@ -311,7 +313,7 @@ STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "g
          "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index"):
+def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index", types=None):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     if os.path.isfile(game):
@@ -319,6 +321,7 @@ def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,dat
         log(f"unpacking {game}")
         game = unpack.unpack(game, os.path.join(out, "input"))
     L = find_layout(os.path.abspath(game))
+    L["types"] = types
     log(f"binary {L['binary']}")
     for s in steps.split(","):
         t = time.time()

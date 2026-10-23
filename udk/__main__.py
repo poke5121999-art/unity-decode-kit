@@ -194,7 +194,7 @@ def cmd_trace(a):
 
 def cmd_build(a):
     from udk import build
-    build.main(a.game, a.out, a.game_re, a.steps)
+    build.main(a.game, a.out, a.game_re, a.steps, a.types)
 
 
 def main():
@@ -241,6 +241,7 @@ def main():
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
     p.add_argument("--steps", default="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index")
+    p.add_argument("--types", help="ghidra step: decompile only types whose group matches this regex")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)
