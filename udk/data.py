@@ -6,6 +6,7 @@ kind, and where the decoded copy went. Keys are found by trying every byte, neve
 import gzip
 import math
 import os
+import struct
 import zlib
 from collections import Counter
 
@@ -122,7 +123,7 @@ class KeyRing:
         return best if best[0] is not None else (None, 0.0)
 
 
-FORMAT = "2: best-reading xor key wins"  # bump when decoding changes, so old dumps redo the data step
+FORMAT = "3: hash-indexed string tables to TSV"  # bump when decoding changes, so old dumps redo the data step
 GOOD_TEXT = 0.8  # share of everyday bytes in real CSV/JSON/Lua text; garbage that prints scores lower
 
 
@@ -145,6 +146,34 @@ def xor_key(b, text, key, check_only=False):
                               for i, c in enumerate(b[:12])):
         return None
     return bytes(c ^ kb[i % len(kb)] for i, c in enumerate(b))
+
+
+def string_table(b):
+    """A hash-indexed string table: a count n, n sorted u32 keys, n ascending u32 file offsets, and at
+    each offset a u32 byte length and UTF-8 text (Zing Speed's databin/Localization_*.bytes). Returns
+    TSV bytes "key<TAB>text" or None. The header before the count is found, not assumed."""
+    for h in range(0, 64, 4):
+        if h + 4 > len(b):
+            return None
+        n = struct.unpack_from("<I", b, h)[0]
+        end = h + 4 + 8 * n
+        if not 8 <= n <= 1 << 20 or end > len(b):
+            continue
+        keys = struct.unpack_from(f"<{n}I", b, h + 4)
+        offs = struct.unpack_from(f"<{n}I", b, h + 4 + 4 * n)
+        if any(keys[i] >= keys[i + 1] for i in range(n - 1)) or offs[0] < end or \
+                any(offs[i] > offs[i + 1] for i in range(n - 1)) or offs[-1] + 4 > len(b):
+            continue
+        rows = []
+        try:
+            for k, o in zip(keys, offs):
+                ln = struct.unpack_from("<I", b, o)[0]
+                text = b[o + 4:o + 4 + ln].decode("utf-8")
+                rows.append(f"{k:08x}\t" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t"))
+        except (UnicodeDecodeError, struct.error):
+            continue
+        return ("key\ttext\n" + "\n".join(rows) + "\n").encode("utf-8")
+    return None
 
 
 def peel(b, ring=None, depth=0):
@@ -183,6 +212,9 @@ def peel(b, ring=None, depth=0):
                 text = None
             out, layers, kind = peel(xor_key(b, text, key), ring, depth + 1)
             return out, [f"xor key {key!r}" + (" per char" if text is not None else "")] + layers, kind
+    table = string_table(b) if depth == 0 else None
+    if table is not None:
+        return table, ["string table"], "tsv"
     e = entropy(b)
     if e > 7.9 and len(b) % 16 == 0:
         return b, [], "encrypted-block-cipher?"
