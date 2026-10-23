@@ -290,7 +290,7 @@ def main():
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
     p.add_argument("--steps", default="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index")
-    p.add_argument("--types", help="ghidra step: decompile only types whose group matches this regex")
+    p.add_argument("--types", help="ghidra step: decompile only types whose group matches this regex (default: the last run's scope; all: every type)")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)

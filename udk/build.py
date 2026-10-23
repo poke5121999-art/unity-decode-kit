@@ -222,6 +222,14 @@ DECOMP_FORMAT = "2: game methods + game generic instances"
 def step_ghidra(L, out, game_re):
     final = os.path.join(out, "code", "decomp")
     marker = os.path.join(out, "code", "decomp.format")
+    if L.get("types") is None:
+        # A rerun keeps the scope of the last one; a whole-binary pass is hours longer than a slice.
+        m = re.search(r"; types (.*?)(; binary |$)", read_text(marker))
+        if m:
+            L["types"] = m.group(1)
+            log(f"ghidra: keeping the last run's type scope {L['types']} (--types all for every type)")
+    if L.get("types") == "all":
+        L["types"] = None
     bin_format = read_text(os.path.join(out, "inspector", "binary.format"))  # empty: no repair needed
     want = DECOMP_FORMAT + (f"; types {L['types']}" if L.get("types") else "") + \
         (f"; binary {bin_format}" if bin_format else "")
