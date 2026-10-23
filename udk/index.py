@@ -13,6 +13,25 @@ def count_lines(path, skip_header=True):
         return sum(1 for _ in fh) - (1 if skip_header else 0)
 
 
+def extras(out):
+    """One line per optional output that exists: shaders, audio, settings, normalized mirror."""
+    rows = []
+    for rel, f in (("shaders/", "summary.txt"), ("audio/", "summary.txt")):
+        p = os.path.join(out, rel, f)
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as fh:
+                rows.append((rel, fh.read().strip() + "."))
+    s = os.path.join(out, "settings")
+    if os.path.isdir(s):
+        rows.append(("settings/", "project settings as shipped: " + ", ".join(sorted(f[:-5] for f in os.listdir(s))) + "."))
+    n = os.path.join(out, "normalized.log")
+    if os.path.exists(n):
+        with open(n, encoding="utf-8") as fh:
+            k = sum(1 for line in fh if "\terror\t" not in line)
+        rows.append(("normalized/", f"game files with engine-modified objects rewritten to the stock layout: {k} files (log `normalized.log`)."))
+    return rows
+
+
 def write(out, layout):
     code = os.path.join(out, "code")
     methods = count_lines(os.path.join(code, "methods.tsv"))
@@ -61,6 +80,7 @@ def write(out, layout):
         f"- `data/`: {sum(data_kinds.values())} loose data files; wrappers found: "
         + ", ".join(f"{k[0]} → {k[1]} ×{v}" for k, v in data_kinds.most_common()) + ". Per file: `data/report.tsv`.",
         f"- `assets/ExportedProject/`: AssetRipper Unity project; {sum(assets.values())} files. {refs} references in `assets/refs.tsv`.",
+    ] + [f"- `{rel}`: {text}" for rel, text in extras(out)] + [
         "",
         "| Asset folder | Files |",
         "|---|---|",

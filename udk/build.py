@@ -164,6 +164,8 @@ def step_data(L, out, game_re):
     if os.path.isdir(text_assets):
         for p in glob.glob(os.path.join(text_assets, "**", "*.bytes"), recursive=True) + \
                 glob.glob(os.path.join(text_assets, "**", "*.txt"), recursive=True):
+            if not os.path.isfile(p):
+                continue  # AssetRipper names a folder after a bundle path ending in .bytes
             items.append((os.path.join("TextAsset", os.path.relpath(p, text_assets)), open(p, "rb").read()))
     rows = data.run(items, d, literals(out))
     log(f"data: {len(rows)} files, {sum(1 for r in rows if r[1] != '-')} unwrapped")
@@ -200,13 +202,24 @@ def step_ghidra(L, out, game_re):
     log(f"named runtime helpers: {', '.join(n for n, _ in found.values())}")
 
 
+def step_normalize(L, out, game_re):
+    """Mirror the game with engine-modified objects rewritten to the stock layout (udk/normalize.py)."""
+    d = os.path.join(out, "normalized")
+    if os.path.exists(d + ".log"):
+        return
+    run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.normalize", L["game"], d, "6"],
+        6 * 3600, os.path.join(out, "logs", "normalize.log"), min_free_gb=8)
+
+
 def step_assets(L, out, game_re):
     from udk import assets
     d = os.path.join(out, "assets")
     if not os.path.isdir(os.path.join(d, "ExportedProject")):
         os.makedirs(d, exist_ok=True)
+        normalized = os.path.join(out, "normalized")
+        src = normalized if os.path.exists(normalized + ".log") else L["game"]
         # AssetRipper empties its target folder first, so its logs live in out/logs.
-        run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.assetripper", ASSETRIPPER, L["game"], d,
+        run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.assetripper", ASSETRIPPER, src, d,
              os.path.join(out, "logs")], 4 * 3600, os.path.join(out, "logs", "assetripper-run.log"), min_free_gb=9)
     spine_dir = os.path.join(KIT, "tools", "spine")
     if not os.path.isdir(os.path.join(spine_dir, "node_modules")):
@@ -249,11 +262,11 @@ def step_index(L, out, game_re):
 
 
 STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
-         "assets": step_assets, "shaders": step_shaders, "settings": step_settings,
+         "assets": step_assets, "shaders": step_shaders, "settings": step_settings, "normalize": step_normalize,
          "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,settings,assets,data,audio,shaders,ghidra,index"):
+def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index"):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     if os.path.isfile(game):

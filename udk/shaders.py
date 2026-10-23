@@ -93,9 +93,14 @@ def rename(hlsl, rows):
     return re.sub(r"\bcb(\d+)\[(\d+)\]", sub, hlsl)
 
 
-def dump_shader(t, out_dir):
+def dump_shader(t, out_dir, taken):
     pf = t["m_ParsedForm"]
-    sdir = os.path.join(out_dir, SAFE.sub("_", pf["m_Name"]))
+    base = SAFE.sub("_", pf["m_Name"])
+    sdir, k = os.path.join(out_dir, base), 1
+    while sdir in taken:  # two Shader objects with one name (copies in different bundles)
+        k += 1
+        sdir = os.path.join(out_dir, f"{base}~{k}")
+    taken.add(sdir)
     os.makedirs(sdir, exist_ok=True)
     keywords = pf.get("m_KeywordNames") or []
     summary = {"name": pf["m_Name"], "properties": pf["m_PropInfo"]["m_Props"], "fallback": pf.get("m_FallbackName"),
@@ -175,7 +180,7 @@ def run(out, files):
     import UnityPy
     sdir = os.path.join(out, "shaders")
     os.makedirs(sdir, exist_ok=True)
-    pending, n = [], 0
+    pending, n, taken = [], 0, set()
     for f in files:
         try:
             env = UnityPy.load(f)
@@ -190,7 +195,7 @@ def run(out, files):
                 continue
             if "m_ParsedForm" not in t:
                 continue
-            pending += dump_shader(t, sdir)
+            pending += dump_shader(t, sdir, taken)
             n += 1
     ok = decompile(pending) if pending else 0
     summary = f"{n} shaders, {len(pending)} DXBC programs, {ok} decompiled to HLSL"

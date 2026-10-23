@@ -31,6 +31,15 @@ SETTINGS = {
 }
 
 
+def memory_env(reserve_gb=6):
+    """Cap the .NET heap below physical memory: on a shared machine a big export (Zing Speed: 295k
+    assets, 24 GB) should fail on its own heap limit, not push the kernel into killing other work."""
+    with open("/proc/meminfo") as fh:
+        total = int(next(l for l in fh if l.startswith("MemTotal")).split()[1]) * 1024
+    limit = max(total - reserve_gb * (1 << 30), 4 << 30)
+    return dict(os.environ, DOTNET_GCHeapHardLimit=hex(limit), DOTNET_GCConserveMemory="7", DOTNET_gcServer="0")
+
+
 def export(binary, game_data_dir, out_dir, log_dir, timeout=4 * 3600, target_version=None):
     """AssetRipper writes <out_dir>/ExportedProject (Assets/, ProjectSettings/) and AuxiliaryFiles.
     It empties out_dir first, so its own log goes to log_dir."""
@@ -38,7 +47,7 @@ def export(binary, game_data_dir, out_dir, log_dir, timeout=4 * 3600, target_ver
     port = free_port()
     logf = os.path.join(log_dir, "assetripper.log")
     proc = subprocess.Popen([binary, "--headless", "--port", str(port), "--log-path", logf],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=memory_env())
     try:
         for _ in range(120):
             try:
