@@ -31,6 +31,12 @@ def extras(out):
         done = [r[0] for r in libs if r[2] == "decompiled"]
         rows.append(("native/", f"native plugins the game binds by P/Invoke: {len(libs)}; decompiled (one .c per class, "
                                 f"`<lib>/functions.tsv`): {', '.join(done) or 'none'}; the rest listed in `plugins.tsv`."))
+    h = os.path.join(out, "havok", "summary.tsv")
+    if os.path.exists(h):
+        with open(h, encoding="utf-8") as fh:
+            hv = [line.split("\t") for line in fh.read().splitlines()[1:]]
+        rows.append(("havok/", f"Havok collision meshes as OBJ (Unity axes): {sum(1 for r in hv if r[2] != '0')} of {len(hv)} "
+                               f"assets, {sum(int(r[2]) for r in hv)} triangles; per asset `havok/summary.tsv`."))
     n = os.path.join(out, "normalized.log")
     if os.path.exists(n):
         with open(n, encoding="utf-8") as fh:

@@ -291,6 +291,40 @@ def step_retype(L, out, game_re):
         log(f"retype: {n} lines annotated in {files} files")
 
 
+def step_havok(L, out, game_re):
+    """Havok collision stored in assets (a hex HKXData field, e.g. Zing Speed's NssHKXData_V00) to
+    havok/<name>.obj in shape space (Unity's axes, Y up) plus havok/summary.tsv."""
+    from udk import havok
+    d = os.path.join(out, "havok")
+    if os.path.exists(os.path.join(d, "summary.tsv")):
+        return
+    src = os.path.join(out, "assets", "ExportedProject", "Assets")
+    r = subprocess.run([os.path.join(KIT, "third_party", "rg"), "-l", "-g", "*.asset", r"^  HKXData: [0-9a-f]", src],
+                       capture_output=True, text=True)
+    os.makedirs(d, exist_ok=True)
+    rows = []
+    for path in sorted(r.stdout.split()):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        hexdata = re.search(r"^  HKXData: ([0-9a-f]+)", text, re.M).group(1)
+        name = (re.search(r"^  HKXName: (.+)$", text, re.M) or re.search(r"^  m_Name: (.+)$", text, re.M)).group(1).strip()
+        report = {}
+        try:
+            ms = havok.meshes(bytes.fromhex(hexdata), report)
+        except Exception as e:  # noqa: BLE001 - one unreadable asset should not stop the rest
+            rows.append((name, 0, 0, f"error: {e}", os.path.relpath(path, src)))
+            continue
+        if ms:
+            havok.write_obj(ms, os.path.join(d, re.sub(r"[^\w.-]", "_", name) + ".obj"))
+        rows.append((name, sum(len(m["vertices"]) for m in ms), sum(len(m["triangles"]) for m in ms),
+                     ",".join(sorted(report.get("skipped", {}))) or "-", os.path.relpath(path, src)))
+    with open(os.path.join(d, "summary.tsv"), "w", encoding="utf-8") as fh:
+        fh.write("name\tvertices\ttriangles\tskipped_shapes\tasset\n")
+        for row in rows:
+            fh.write("\t".join(map(str, row)) + "\n")
+    log(f"havok: {sum(1 for r_ in rows if r_[2])} of {len(rows)} collision assets to OBJ")
+
+
 def step_native(L, out, game_re):
     """Decompile the game's own native plugins (udk/native.py). SDK plugins bound by P/Invoke too are
     listed in native/plugins.tsv but not decompiled unless L["native"] (a regex over file names) says so."""
@@ -461,10 +495,10 @@ def step_index(L, out, game_re):
 
 STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
          "assets": step_assets, "shaders": step_shaders, "settings": step_settings, "normalize": step_normalize,
-         "native": step_native, "retype": step_retype, "index": step_index}
+         "native": step_native, "retype": step_retype, "havok": step_havok, "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,retype,native,index", types=None,
+def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,retype,native,havok,index", types=None,
          native=None):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
