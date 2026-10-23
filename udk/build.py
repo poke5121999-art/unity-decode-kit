@@ -127,10 +127,10 @@ def step_inspector(L, out, game_re):
 def fix_binary(L, d, meta):
     """Undo at-rest protection of an ELF libil2cpp.so (see udk/elf.py); later steps use the copy."""
     from udk import elf
-    with open(L["binary"], "rb") as fh:
+    with open(L["game_binary"], "rb") as fh:  # always repair from the shipped file
         b = bytearray(fh.read())
     if b[:4] != b"\x7fELF":
-        return L["binary"], meta
+        return L["game_binary"], meta
     windows = elf.unxor_sections(b)
     moved = elf.unshuffle_windows(b, windows)
     with open(meta, "rb") as fh:
@@ -156,8 +156,8 @@ def fix_binary(L, d, meta):
                 fh.write(m)
         log(f"default values with unreadable types retyped as Int32: {unset}")
     if not windows and not (neutral and neutral[2]):
-        return L["binary"], meta
-    fixed = os.path.join(d, os.path.basename(L["binary"]))
+        return L["game_binary"], meta
+    fixed = os.path.join(d, os.path.basename(L["game_binary"]))
     with open(fixed, "wb") as fh:
         fh.write(b)
     dropped = elf.sanitize(fixed, fixed)
@@ -240,8 +240,11 @@ def step_ghidra(L, out, game_re):
     if L.get("types") == "all":
         L["types"] = None
     bin_format = read_text(os.path.join(out, "inspector", "binary.format"))  # empty: no repair needed
+    # What the Ghidra project's copy of the bytes came from: the repair format and the file. Empty when
+    # the shipped binary needed no repair, which keeps older unrepaired dumps current.
+    imported = f"{bin_format} {L['binary']}" if bin_format else ""
     want = DECOMP_FORMAT + (f"; types {L['types']}" if L.get("types") else "") + \
-        (f"; binary {bin_format}" if bin_format else "")
+        (f"; binary {imported}" if imported else "")
     if os.path.exists(os.path.join(out, "code", "methods.tsv")) and os.path.exists(marker) and \
             open(marker).read().strip() == want:
         return
@@ -256,14 +259,14 @@ def step_ghidra(L, out, game_re):
     py = os.path.join(KIT, ".venv", "bin", "pyghidra")
     base = [py, "-X", "mx14g", "--skip-analysis", "--project-path", proj, "--project-name", "p", L["binary"]]
     prepared = os.path.join(proj, "prepared")
-    if os.path.exists(prepared) and read_text(prepared) != bin_format:
+    if os.path.exists(prepared) and read_text(prepared) != imported:
         shutil.rmtree(proj)  # the project holds a copy of the binary's bytes; an older repair is stale
         os.makedirs(proj)
     if not os.path.exists(prepared):
         run(base + [os.path.join(KIT, "tools", "ghidra", "prepare.py"), os.path.join(out, "inspector"), game_re],
             4 * 3600, os.path.join(proj, "prepare.log"), min_free_gb=8)
         with open(prepared, "w") as fh:
-            fh.write(bin_format + "\n")
+            fh.write(imported + "\n")
     run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6"]
         + ([L["types"]] if L.get("types") else []),
         6 * 3600, os.path.join(proj, "decompile.log"), min_free_gb=6)
@@ -469,6 +472,11 @@ def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,dat
         game = unpack.unpack(game, os.path.join(out, "input"))
     L = find_layout(os.path.abspath(game))
     L["types"] = types
+    # A repaired copy from an earlier run is what every later step reads (Ghidra once read the
+    # protected file because only an inspector step in the same run switched over).
+    fixed = os.path.join(out, "inspector", os.path.basename(L["game_binary"]))
+    if os.path.exists(fixed) and os.path.exists(os.path.join(out, "inspector", "binary.format")):
+        L["binary"] = fixed
     L["native"] = native
     log(f"binary {L['binary']}")
     for s in steps.split(","):
