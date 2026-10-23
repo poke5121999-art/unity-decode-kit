@@ -41,6 +41,8 @@ và thêm listener UnityEvent trong prefab. W064 và W074 có lời đáp "khôn
 |---|---|---|---|---|---|
 | 1 | decomp lát gameplay trên binary đã gỡ bảo vệ, `native/`, retype | 5 | 27 | 10 | 5: Z002 (shader), Z010 (localization), Z021 (va chạm Havok), Z032 (transform), Z039 (thân method ngoài lát) |
 | sau 1 | + shader blob Zstandard → GLSL, `udk asset` (YAML thô, kích thước ảnh), `method`/`q` tìm cả native, export một lệnh → thân hàm qua PLT, decomp toàn bộ NssMain (đang chạy) | | | | |
+| 2 | như dòng trên; decomp NssMain dở dang | 15 | 22 | 7 | 3: Z009 (MonoBehaviour ngoài bundle rỗng: lượt xuất asset trước khi gộp split), Z032 (cao độ mặt đường Troy), Z039 (nhãn TypeInfo/MethodInfo/StringLiteral lệch 64 KB: Ghidra nạp ELF ở base 0x10000) |
+| sau 2 | ELF import ở image base 0, xuất lại asset từ mirror đã gộp, PlayerSettings của engine đã vá, `q -k strings`, `callers` cho const string | | | | |
 
 Nhiều câu "một phần" là dữ liệu server hoặc bank âm thanh không có trong APK; phần còn lại cần thân method ngoài lát
 gameplay (NssMain đầy đủ đang dịch). Va chạm Havok (`NssHKXData_V00`, tagfile Havok 2014) chưa có bộ đọc.
