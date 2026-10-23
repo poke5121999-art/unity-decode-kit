@@ -119,7 +119,12 @@ def fix_binary(L, d, meta):
     img_off, img_size = struct.unpack_from("<II", m, 8 + 8 * 20)
     owned = max(sum(struct.unpack_from("<II", m, img_off + i + 8)) for i in range(0, img_size, 40))
     n_params = struct.unpack_from("<I", m, 8 + 8 * 12 + 4)[0] // 16  # genericParameters, 16 bytes each in v24
-    neutral = elf.neutralize_types(b, owned, n_params)
+    version = struct.unpack_from("<i", m, 4)[0]
+    # The registration and Il2CppType layouts below are those of metadata v24 (Unity 2018.4-2019.4);
+    # on another version they would locate the wrong tables and write over unrelated bytes.
+    neutral = elf.neutralize_types(b, owned, n_params) if version == 24 else None
+    if version != 24:
+        log(f"metadata v{version}: XOR windows undone; type/registration repairs are v24-only and were skipped")
     if neutral:
         reg_meta = int(neutral[0], 16)
         neutral = neutral + (elf.restore_typedef_types(b, reg_meta, m),
@@ -138,7 +143,7 @@ def fix_binary(L, d, meta):
     dropped = elf.sanitize(fixed, fixed)
     with open(fixed, "rb") as fh:
         b = bytearray(fh.read())
-    reg = elf.find_code_registration(b)
+    reg = elf.find_code_registration(b) if version == 24 else None
     invokers = elf.clamp_invoker_indices(b, reg[1], reg[0], reg[2]) if reg else 0
     names = elf.repair_module_names(b, reg[1], reg[0], m) if reg else []
     if reg and neutral:
