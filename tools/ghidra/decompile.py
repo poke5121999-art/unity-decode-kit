@@ -80,7 +80,9 @@ def worker(chunk):
             if res is None or not res.decompileCompleted():
                 lines.append(f"// decompile failed: {res.getErrorMessage() if res else 'none'}\n")
                 continue
-            lines.extend(res.getDecompiledFunction().getC().strip("\n").split("\n"))
+            # Ghidra's getC() double-spaces (a blank line after every statement); drop the
+            # blank lines so bodies read single-spaced and methods.tsv line numbers stay tight.
+            lines.extend(ln for ln in res.getDecompiledFunction().getC().strip("\n").split("\n") if ln.strip())
             lines.append("")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
