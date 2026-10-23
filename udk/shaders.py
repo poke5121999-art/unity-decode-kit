@@ -1,6 +1,6 @@
 """Shaders: readable programs for every variant, which AssetRipper Free replaces with dummies.
 
-For each Shader asset: the platform blobs are LZ4 chunks holding one entry per sub-program;
+For each Shader asset: the platform blobs are LZ4 (or Zstandard) chunks holding one entry per sub-program;
 the parsed form says which (pass, stage, keywords) each blob entry is and names the uniforms.
   D3D11 entries carry DXBC: 3Dmigoto's cmd_Decompiler (under wine on Linux) turns it into HLSL,
     then cbN[i] references are renamed to the uniform names Unity stored (_MainTex_ST, ...).
@@ -32,7 +32,12 @@ def blob_entries(t, platform_i):
 
     blob = bytes(t["compressedBlob"])
     off, clen, dlen = pick(t["offsets"]), pick(t["compressedLengths"]), pick(t["decompressedLengths"])
-    data = lz4.block.decompress(blob[off:off + clen], uncompressed_size=dlen)
+    chunk = blob[off:off + clen]
+    if chunk[:4] == b"\x28\xb5\x2f\xfd":  # Zstandard: Zing Speed's modified engine stores blobs this way
+        import zstandard
+        data = zstandard.ZstdDecompressor().decompress(chunk, max_output_size=dlen)
+    else:
+        data = lz4.block.decompress(chunk, uncompressed_size=dlen)
     count = struct.unpack_from("<i", data, 0)[0]
     stride = (len(data) and 12) if count and 4 + count * 12 <= len(data) and _plausible(data, count, 12) else 8
     out = []
@@ -198,7 +203,8 @@ def run(out, files):
             pending += dump_shader(t, sdir, taken)
             n += 1
     ok = decompile(pending) if pending else 0
-    summary = f"{n} shaders, {len(pending)} DXBC programs, {ok} decompiled to HLSL"
+    glsl = sum(1 for d, _, fs in os.walk(sdir) for f in fs if f.endswith(".glsl"))
+    summary = f"{n} shaders, {len(pending)} DXBC programs, {ok} decompiled to HLSL, {glsl} GLSL programs as shipped"
     with open(os.path.join(sdir, "summary.txt"), "w") as fh:
         fh.write(summary + "\n")
     print(f"[shaders] {summary}", flush=True)

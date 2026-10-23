@@ -14,6 +14,7 @@ import csv
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 
@@ -47,7 +48,7 @@ def cmd_q(a):
         r = subprocess.run([RG, "-n", "-i", "-m", "3", "--max-columns", "220", "--max-columns-preview"]
                            + (["-a"] if k == "data" else []) +
                            ["-g", "!*.meta", "-g", "!*.png", "-g", "!wwnames.txt", a.pattern, path],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         lines = r.stdout.splitlines()
         print(f"== {k}: {len(lines)} hits" + (f" (showing {a.n})" if len(lines) > a.n else ""))
         for line in lines[: a.n]:
@@ -355,6 +356,39 @@ def cmd_prefab(a):
     prefab.print_prefab(dump_root(a), a.spec, a.n, a.v)
 
 
+def cmd_asset(a):
+    """Raw YAML of the objects in matching assets (all, or only one component type), or an image's size."""
+    root = dump_root(a)
+    project = os.path.join(root, "assets", "ExportedProject")
+    rx = re.compile(a.path)
+    hits = []
+    for d, _, fs in os.walk(os.path.join(project, "Assets")):
+        for f in fs:
+            p = os.path.join(d, f)
+            if not f.endswith(".meta") and rx.search(os.path.relpath(p, project)):
+                hits.append(p)
+    if not hits:
+        sys.exit(f"no asset matches {a.path!r}")
+    for p in sorted(hits)[: a.n]:
+        rel = os.path.relpath(p, project)
+        if p.lower().endswith((".png", ".jpg", ".tga", ".exr")):
+            with open(p, "rb") as fh:
+                head = fh.read(32)
+            size = struct.unpack(">II", head[16:24]) if head[:8] == b"\x89PNG\r\n\x1a\n" else None
+            print(f"{rel}\t{'%dx%d' % size if size else '?'}\t{os.path.getsize(p)} bytes")
+            continue
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            docs = re.split(r"(?m)^(?=--- !u!)", fh.read())
+        print(f"### {rel}")
+        for doc in docs:
+            m = re.match(r"--- !u!\d+ &-?\d+.*\n(\w+):", doc)
+            if a.c and not (m and re.fullmatch(a.c, m.group(1))):
+                continue
+            print(doc.rstrip()[: a.chars])
+    if len(hits) > a.n:
+        print(f"... {len(hits) - a.n} more; raise -n")
+
+
 def cmd_objects(a):
     from udk import prefab
     prefab.find_objects(dump_root(a), a.name, a.n)
@@ -420,6 +454,12 @@ def main():
     p.add_argument("-n", type=int, default=1)
     p.add_argument("-v", action="store_true", help="also print short scalar fields")
     p.set_defaults(fn=cmd_prefab)
+    p = sub.add_parser("asset", help="raw YAML of an asset's objects (-c to keep one component type), or image size")
+    p.add_argument("path", help="regex over asset paths")
+    p.add_argument("-c", help="component type regex, e.g. ParticleSystem, Transform, Material")
+    p.add_argument("-n", type=int, default=3)
+    p.add_argument("--chars", type=int, default=20000, help="cut each object's YAML at this length")
+    p.set_defaults(fn=cmd_asset)
     p = sub.add_parser("objects", help="find GameObjects by name in every prefab and scene")
     p.add_argument("name", help="regex over GameObject names (whole name)")
     p.add_argument("-n", type=int, default=50)
