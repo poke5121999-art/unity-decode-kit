@@ -333,10 +333,83 @@ def append_segment(b, data, align=0x1000):
     return vaddr
 
 
-def repair_module_names(b, code_reg_modules, n_modules, meta, typedef_size=92):
+TYPEDEF_LAYOUT = {24: (92, 68), 31: (88, 64)}  # metadata version: (Il2CppTypeDefinition size, method_count offset)
+
+
+def load_segments(b):
+    """(vaddr, file offset, file size) of every PT_LOAD."""
+    is64, end, phoff, phentsize, phnum, ph, *_ = _layout(b)
+    out = []
+    for i in range(phnum):
+        f = struct.unpack_from(ph, b, phoff + i * phentsize)
+        p_type, off, vaddr, filesz = (f[0], f[2], f[3], f[5]) if is64 else (f[0], f[1], f[2], f[4])
+        if p_type == PT_LOAD and filesz:
+            out.append((vaddr, off, filesz))
+    return out
+
+
+def va_to_off(segs, va):
+    for v, o, n in segs:
+        if v <= va < v + n:
+            return o + va - v
+    return None
+
+
+def off_to_va(segs, off):
+    for v, o, n in segs:
+        if o <= off < o + n:
+            return v + off - o
+    return None
+
+
+def find_modules(b):
+    """Locate (codeGenModulesCount, file offset of the codeGenModules array, file offset of the count
+    field) from the mscorlib module: its name string, the module struct pointing at it, the array
+    holding that struct, and the count stored just before the array pointer in
+    Il2CppCodeRegistration. Pointers are virtual addresses, mapped through the load segments."""
+    raw, segs = bytes(b), load_segments(b)
+    name = raw.find(b"mscorlib.dll\0")
+    name_va = off_to_va(segs, name) if name >= 0 else None
+    if name_va is None:
+        return None
+
+    def module_like(va):
+        # Aligned, and its name and methodPointers fields are mapped addresses (a relocation table
+        # of (offset, 0x17) pairs would otherwise pass).
+        o = va_to_off(segs, va) if va and va % 4 == 0 else None
+        if o is None or o + 12 > len(raw):
+            return False
+        name_p, count, ptrs = struct.unpack_from("<III", raw, o)
+        return count < 1 << 20 and va_to_off(segs, name_p) is not None and (count == 0 or va_to_off(segs, ptrs) is not None)
+
+    module = raw.find(struct.pack("<I", name_va))
+    while module >= 0:
+        needle = struct.pack("<I", off_to_va(segs, module) or 0)
+        slot = raw.find(needle)
+        while slot >= 0:  # the first hits can be four bytes of code that happen to match
+            start = slot
+            while module_like(struct.unpack_from("<I", raw, start - 4)[0]):
+                start -= 4
+            start_va = off_to_va(segs, start)
+            ref = raw.find(struct.pack("<I", start_va))
+            while ref >= 0:
+                count = struct.unpack_from("<I", raw, ref - 4)[0]
+                if start < slot + 4 <= start + 4 * count < len(raw) and count < 4096 and \
+                        all(module_like(v) for v in struct.unpack_from(f"<{count}I", raw, start)):
+                    return count, start, ref - 4
+                ref = raw.find(struct.pack("<I", start_va), ref + 1)
+            slot = raw.find(needle, slot + 1)
+        module = raw.find(struct.pack("<I", name_va), module + 1)
+    return None
+
+
+def repair_module_names(b, modules, n_modules, meta, version=24):
     """Point every Il2CppCodeGenModule at its real assembly name. Protected builds scramble some name
     pointers; a module is matched to its image by method count (unique except for empty modules,
-    whose order does not matter). Repaired names go into an appended segment."""
+    whose order does not matter). A name already present in the binary is reused, else it goes into
+    an appended segment."""
+    typedef_size, mc_off = TYPEDEF_LAYOUT[version]
+    segs = load_segments(b)
     so = struct.unpack_from("<I", meta, 8 + 16)[0]
     io, isz = struct.unpack_from("<II", meta, 8 + 8 * 20)
     to = struct.unpack_from("<I", meta, 8 + 8 * 19)[0]
@@ -348,12 +421,15 @@ def repair_module_names(b, code_reg_modules, n_modules, meta, typedef_size=92):
     images = {}
     for k in range(isz // 40):
         name, _, ts, tc = struct.unpack_from("<4I", meta, io + 40 * k)
-        images[mstr(name)] = sum(struct.unpack_from("<H", meta, to + typedef_size * t + 68)[0] for t in range(ts, ts + tc))
-    mods = struct.unpack_from(f"<{n_modules}I", b, code_reg_modules)
+        images[mstr(name)] = sum(struct.unpack_from("<H", meta, to + typedef_size * t + mc_off)[0] for t in range(ts, ts + tc))
     named, broken = set(), []
-    for a in mods:
+    for va in struct.unpack_from(f"<{n_modules}I", b, modules):
+        a = va_to_off(segs, va)
+        if a is None:
+            continue
         p, count = struct.unpack_from("<II", b, a)
-        nm = bytes(b[p:p + 128]).split(b"\0")[0] if 0 < p < len(b) else b""
+        po = va_to_off(segs, p)
+        nm = bytes(b[po:po + 128]).split(b"\0")[0] if po is not None else b""
         if nm in images:
             named.add(nm)
         else:
@@ -366,44 +442,37 @@ def repair_module_names(b, code_reg_modules, n_modules, meta, typedef_size=92):
             continue
         name = cands[0]
         del free[name]
-        # Always write a fresh copy: a matching string found elsewhere can sit in a region another
-        # repair rewrites (Zing Speed stores some inside a corrupted invoker index array).
+        # A fresh copy by default: a matching string elsewhere can sit in a region another repair
+        # rewrites (Zing Speed stores some inside a corrupted invoker index array).
         places[a] = len(blob)
         blob += name + b"\0"
         fixes.append(name.decode())
     if blob:
-        base = append_segment(b, bytes(blob))
+        try:
+            base = append_segment(b, bytes(blob))
+        except ValueError:  # no free program header: point at an existing copy of each name instead
+            raw = bytes(b)
+            for a, rel in places.items():
+                nm = bytes(blob[rel:blob.index(b"\0", rel) + 1])
+                hit = raw.find(nm)
+                while hit > 0 and raw[hit - 1] != 0:
+                    hit = raw.find(nm, hit + 1)
+                va = off_to_va(segs, hit) if hit > 0 else None
+                if va is not None:
+                    struct.pack_into("<I", b, a, va)
+            return fixes
         for a, rel in places.items():
             struct.pack_into("<I", b, a, base + rel)
     return fixes
 
 
 def find_code_registration(b):
-    """Locate (codeGenModulesCount, codeGenModules) from the mscorlib module: its name string, the
-    module struct pointing at it, the module array holding that struct, and the count stored just
-    before the array pointer in Il2CppCodeRegistration."""
-    raw = bytes(b)
-    name = raw.find(b"mscorlib.dll\0")
-    if name < 0:
+    """v24.5: (codeGenModulesCount, codeGenModules offset, Il2CppCodeRegistration offset)."""
+    found = find_modules(b)
+    if not found:
         return None
-    module = raw.find(struct.pack("<I", name))
-    slot = raw.find(struct.pack("<I", module)) if module >= 0 else -1
-    if slot < 0:
-        return None
-    start = slot
-    while True:
-        prev = struct.unpack_from("<I", raw, start - 4)[0]
-        if 0 < prev < len(raw) - 4 and 0 < struct.unpack_from("<I", raw, prev)[0] < len(raw):
-            start -= 4
-        else:
-            break
-    ref = raw.find(struct.pack("<I", start))
-    while ref >= 0:
-        count = struct.unpack_from("<I", raw, ref - 4)[0]
-        if 0 < count < 4096:
-            return count, start, ref - 4 - 60  # v24.5: 15 words precede codeGenModulesCount
-        ref = raw.find(struct.pack("<I", start), ref + 1)
-    return None
+    count, start, count_field = found
+    return count, start, count_field - 60  # 15 words precede codeGenModulesCount
 
 
 def clamp_invoker_indices(b, modules, n_modules, code_reg):

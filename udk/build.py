@@ -145,7 +145,8 @@ def fix_binary(L, d, meta):
         b = bytearray(fh.read())
     reg = elf.find_code_registration(b) if version == 24 else None
     invokers = elf.clamp_invoker_indices(b, reg[1], reg[0], reg[2]) if reg else 0
-    names = elf.repair_module_names(b, reg[1], reg[0], m) if reg else []
+    mods = elf.find_modules(b) if version in elf.TYPEDEF_LAYOUT else None
+    names = elf.repair_module_names(b, mods[1], mods[0], m, version) if mods else []
     if reg and neutral:
         specs, rows, ranges = elf.repair_generic_tables(b, int(neutral[0], 16), reg[2], reg[1], reg[0], m)
         log(f"generic tables repaired: {specs} method specs rewritten, {rows} generic method rows and "
