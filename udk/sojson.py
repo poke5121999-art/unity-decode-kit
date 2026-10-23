@@ -6,7 +6,7 @@ compile field-accurate scripts can still read the data: each matching asset beco
 <dest>/<path under Assets>.json = {"script": <class>, "fields": {...}}. Scalars stay strings as
 Unity wrote them (numbers, and hex blobs for primitive arrays such as `Children: 01000000`), so
 nothing is reinterpreted on the way.
-Usage: python -m udk.sojson <ExportedProject> <dest> <path regex>...
+Usage: python -m udk.sojson <ExportedProject> <dest> <path regex>... [--flat]  (--flat: no subfolders)
 """
 import json
 import os
@@ -49,7 +49,7 @@ def convert(path, scripts):
             "fields": {k: v for k, v in data.items() if k not in SKIP and k != "m_Name"}}
 
 
-def run(export, dest, patterns):
+def run(export, dest, patterns, flat=False):
     rx = [re.compile(p) for p in patterns]
     scripts = script_names(export)
     written = []
@@ -64,7 +64,7 @@ def run(export, dest, patterns):
             doc = convert(os.path.join(d, f), scripts)
             if doc is None:
                 continue
-            out = os.path.join(dest, os.path.relpath(os.path.join(d, f), assets)) + ".json"
+            out = os.path.join(dest, f if flat else os.path.relpath(os.path.join(d, f), assets)) + ".json"
             os.makedirs(os.path.dirname(out), exist_ok=True)
             with open(out, "w", encoding="utf-8") as fh:
                 json.dump(doc, fh, ensure_ascii=False, separators=(",", ":"))
@@ -73,5 +73,7 @@ def run(export, dest, patterns):
 
 
 if __name__ == "__main__":
-    done = run(sys.argv[1], sys.argv[2], sys.argv[3:])
+    flat = "--flat" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--flat"]
+    done = run(args[0], args[1], args[2:], flat)
     print(f"[sojson] {len(done)} ScriptableObject assets as JSON")
