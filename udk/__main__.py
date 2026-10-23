@@ -143,10 +143,20 @@ def cmd_callers(a):
                     sig = label.split(": ", 1)[-1]
                     if sig not in seen:
                         by_method.setdefault(("binary", 0, sig), []).append(f"{how} at 0x{site:X} in {label}")
+    # UnityEvent listeners wired in the editor (Button.onClick...) call by name from prefabs/scenes.
+    assets_dir = os.path.join(root, "assets", "ExportedProject", "Assets")
+    if names and os.path.isdir(assets_dir):
+        r = subprocess.run([RG, "-n", "-g", "*.prefab", "-g", "*.unity", "-g", "*.asset",
+                            rf"^\s+m_MethodName: ({'|'.join(map(re.escape, names))})$", assets_dir],
+                           capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            p, no, text = line.split(":", 2)
+            by_method.setdefault(("event", 0, os.path.relpath(p, assets_dir)), []).append(f"line {no}: {text.strip()}")
     kind = "calls or backing-field uses" if names else "field uses"
     print(f"{len(by_method)} methods with {kind} of {a.spec}")
     for (path, line, caller), texts in list(by_method.items())[: a.n]:
-        print(f"### {path}:{line}  {caller}" if path != "binary" else f"### (binary only, not in decomp)  {caller}")
+        print({"binary": f"### (binary only, not in decomp)  {caller}",
+               "event": f"### (UnityEvent listener in asset)  {caller}"}.get(path, f"### {path}:{line}  {caller}"))
         for t_ in texts[:3]:
             print("    " + t_[:200])
     if len(by_method) > a.n:
