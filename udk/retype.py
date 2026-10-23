@@ -64,7 +64,30 @@ def closed_returns(metadata_json):
 
 # Members of the shared types Ghidra picks, by offset in pointer-size units of the object header.
 HEADER = {"klass": 0, "monitor": 1, "bounds": 2, "max_length": 3}
-ASSIGN = re.compile(r"(\w+) = [^;]*?(MethodInfo__(?:[^\s,()<>]|<(?:[^<>]|<[^<>]*>)*>)+)", re.S)
+ASSIGN = re.compile(r"(\w+) = (?:(?!\b\w+ = )[^;])*?(MethodInfo__(?:[^\s,()<>]|<(?:[^<>]|<[^<>]*>)*>)+)", re.S)
+
+
+_PREFIX = {}
+
+
+def lookup(returns, key):
+    """Return type for a MethodInfo label; Ghidra cuts very long labels at the line end, so a label
+    that is a prefix of known ones resolves when they all return the same type."""
+    if key in returns:
+        return returns[key]
+    if len(key) < 40:
+        return None
+    if id(returns) not in _PREFIX:
+        _PREFIX.clear()
+        _PREFIX[id(returns)] = sorted(returns)
+    import bisect
+    keys = _PREFIX[id(returns)]
+    i = bisect.bisect_left(keys, key)
+    found = set()
+    while i < len(keys) and keys[i].startswith(key):
+        found.add(returns[keys[i]])
+        i += 1
+    return found.pop() if len(found) == 1 else None
 
 
 def annotate(text, returns, fields, ptr):
@@ -80,7 +103,7 @@ def annotate(text, returns, fields, ptr):
     for chunk in chunks:
         seen = {}
         for m in ASSIGN.finditer(chunk):
-            ret = returns.get(ALNUM.sub("", m.group(2)))
+            ret = lookup(returns, ALNUM.sub("", m.group(2)))
             q = None
             if ret:
                 q = ret if ret in fields else (by_short.get(ret.rsplit(".", 1)[-1]) or [None])[0]
@@ -96,18 +119,23 @@ def annotate(text, returns, fields, ptr):
             if MARK not in line:
                 for var, q in var_type.items():
                     v = re.escape(var)
-                    for mm in re.finditer(rf"\(\(\w+\)&{v}->(\w+) \+ (0x[0-9a-fA-F]+|\d+)\)|"
+                    for mm in re.finditer(rf"\(\(\w+\)&{v}(?:->|\[(\d+)\]\.)(\w+) \+ (0x[0-9a-fA-F]+|\d+)\)|"
+                                          rf"\b{v}\[(\d+)\]\.(klass|monitor)\b|"
                                           rf"\b{v}->(\w+)\b(?!\[)|\b{v}->vector\[(\d+)\]|"
                                           rf"\([\w ]+\*\)\((?:\(\w+\))?{v} \+ (0x[0-9a-fA-F]+|\d+)\)", line):
                         g = mm.groups()
-                        if g[0] in HEADER:
-                            off = HEADER[g[0]] * ptr + int(g[1], 0)
-                        elif g[2] in HEADER:
-                            off = HEADER[g[2]] * ptr
-                        elif g[3]:
-                            off = (4 + int(g[3])) * ptr  # Object__Array.vector after the header
+                        # Il2CppObject* indexed as an array: p[k].monitor is k objects of (klass, monitor) in
+                        obj = lambda k: 2 * ptr * int(k) if k else 0
+                        if g[1] in HEADER:
+                            off = obj(g[0]) + HEADER[g[1]] * ptr + int(g[2], 0)
                         elif g[4]:
-                            off = int(g[4], 0)
+                            off = obj(g[3]) + HEADER[g[4]] * ptr
+                        elif g[5] in HEADER:
+                            off = HEADER[g[5]] * ptr
+                        elif g[6]:
+                            off = (4 + int(g[6])) * ptr  # Object__Array.vector after the header
+                        elif g[7]:
+                            off = int(g[7], 0)
                         else:
                             continue
                         f = fields[q].get(off)
