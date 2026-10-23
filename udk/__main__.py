@@ -99,7 +99,8 @@ def cmd_callers(a):
         field = None
     else:  # field, or auto-property whose getter IL2CPP inlined into a backing-field read
         field = f"_{member}_k__BackingField" if names else member
-    rxs = [rf"(\w+)->fields\)\.{re.escape(field)}\b|static_fields->{re.escape(field)}\b"] if field else []
+    rxs = [rf"(\w+)->fields\)\.{re.escape(field)}\b|static_fields->{re.escape(field)}\b"
+           rf"|retype: \w+: {short}; 0x[0-9a-f]+ = {re.escape(field)}\b"] if field else []
     if names:
         rxs.append(rf"(?<![A-Za-z0-9]){re.escape(t)}__({'|'.join(map(re.escape, names))})(?!_b__\d)(_\w*)?\b")
     out = []
@@ -161,6 +162,47 @@ def cmd_callers(a):
             print("    " + t_[:200])
     if len(by_method) > a.n:
         print(f"... {len(by_method) - a.n} more; raise -n")
+    own_files = {os.path.join("code", "decomp", m["file"]) for m in methods(root) if m["c_name"].startswith(t + "_")}
+    if names and own and all(k[0] in own_files for k in by_method):
+        if by_method:
+            print(f"only {short}'s own methods use it")
+        explain_no_callers(root, t, short, names)
+
+
+def explain_no_callers(root, t, short, names):
+    """Say what an empty result covers, so a reader can take it as "nothing uses this" or see what
+    could still hide a use: a virtual call through a base or interface, or a body inlined into its callers."""
+    print("searched: decompiled calls (folded bodies too), machine-code calls/jumps/address loads, "
+          "MethodInfo references (delegates), UnityEvent listeners in prefabs and scenes")
+    with open(os.path.join(root, "code", "types.cs"), encoding="utf-8", errors="replace") as fh:
+        decl = [l.strip() for l in fh if re.search(rf"\b({'|'.join(map(re.escape, names))})\(", l)]
+    hidden = any(re.search(r"\b(virtual|override|abstract)\b", d) or re.match(r"\w+ \w+\.\w+\(", d.split(" ", 1)[-1])
+                 for d in decl)
+    if hidden:
+        print("note: virtual or interface method; calls through the base or interface reach it by vtable and "
+              "are listed under the base method's name")
+    for m in methods(root):
+        if not (m["c_name"].startswith(t + "_") and m["signature"].split("(")[0].split()[-1] in names):
+            continue
+        from udk import xref
+        if xref.shared_count(root, int(m["address"], 16)) > 1:
+            continue  # folded: the decompiled body is another method's; its own field is the backing field above
+        path = os.path.join(root, "code", "decomp", m["file"])
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        start = int(m["line"])
+        end = next((i for i in range(start, len(lines)) if lines[i].startswith("// ") and "  @0x" in lines[i]), len(lines))
+        fields = sorted(set(re.findall(r"->fields\)\.(\w+)", "\n".join(lines[start:end]))))
+        for f in fields:  # a small body may be inlined; its reads then sit in the callers
+            r = subprocess.run([RG, "-l", "-P", rf"->fields\)\.{re.escape(f)}\b", os.path.join(root, "code", "decomp")],
+                               capture_output=True, text=True)
+            other = [os.path.relpath(x, root) for x in r.stdout.split() if os.path.abspath(x) != os.path.abspath(path)]
+            hidden = hidden or bool(other)
+            print(f"inlining check: field {f} read by its body is used in {len(other)} other files"
+                  + (f" ({', '.join(other[:5])}); see `udk callers {short}.{f}`" if other else ""))
+    print("check the notes above before reading this as unused" if hidden else
+          f"nothing outside {short} found by these searches (a read through an untyped pointer, "
+          "*(int *)(p + 0x20), would not show)")
 
 
 def folded_callers(root, m, short):
@@ -289,7 +331,7 @@ def main():
     p.add_argument("game")
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
-    p.add_argument("--steps", default="inspector,settings,normalize,assets,data,audio,shaders,ghidra,native,index")
+    p.add_argument("--steps", default="inspector,settings,normalize,assets,data,audio,shaders,ghidra,retype,native,index")
     p.add_argument("--types", help="ghidra step: decompile only types whose group matches this regex (default: the last run's scope; all: every type)")
     p.add_argument("--native", help="native step: regex over plugin file names to decompile (default: the game's own)")
     p.set_defaults(fn=cmd_build)

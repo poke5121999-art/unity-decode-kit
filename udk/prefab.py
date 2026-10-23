@@ -36,7 +36,28 @@ def parse(text):
     return objs
 
 
-def describe(path, guids, verbose=False):
+SHADER_RE = re.compile(r'^\s*Shader\s+"([^"]+)"', re.M)
+
+
+def shader_of(project, mat, guids, cache={}):
+    """Shader name a material uses: the ShaderLab name in the exported .shader, or the built-in id."""
+    if mat not in cache:
+        cache[mat] = None
+        p = os.path.join(project, mat)
+        if os.path.exists(p):
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                m = re.search(r"m_Shader: \{fileID: (-?\d+)(?:, guid: ([0-9a-f]{32}))?", fh.read())
+            if m and m.group(2) in guids:
+                sp = os.path.join(project, guids[m.group(2)])
+                head = open(sp, encoding="utf-8", errors="replace").read(4096) if os.path.exists(sp) else ""
+                n = SHADER_RE.search(head)
+                cache[mat] = n.group(1) if n else os.path.splitext(os.path.basename(guids[m.group(2)]))[0]
+            elif m:
+                cache[mat] = f"built-in shader fileID {m.group(1)}"
+    return cache[mat]
+
+
+def describe(path, guids, verbose=False, project=None):
     with open(path, encoding="utf-8", errors="replace") as fh:
         objs = parse(fh.read())
     script_names = {}
@@ -72,7 +93,9 @@ def describe(path, guids, verbose=False):
     def target(raw):
         m = ASSET_RE.search(raw)
         if m:
-            return guids.get(m.group(2), f"guid {m.group(2)}")
+            p = guids.get(m.group(2), f"guid {m.group(2)}")
+            sh = shader_of(project, p, guids) if project and p.endswith(".mat") else None
+            return f"{p} [shader {sh}]" if sh else p
         m = LOCAL_RE.search(raw)
         if not m or m.group(1) == "0":
             return None
@@ -138,6 +161,6 @@ def print_prefab(root, spec, n=1, verbose=False):
         raise SystemExit(f"no prefab or scene matches {spec!r}")
     for rel in hits[:n]:
         print(f"### {rel}")
-        print("\n".join(describe(os.path.join(project, rel), guids, verbose)))
+        print("\n".join(describe(os.path.join(project, rel), guids, verbose, project)))
     if len(hits) > n:
         print(f"... {len(hits) - n} more matches: " + ", ".join(os.path.basename(h) for h in hits[n:n + 8]))

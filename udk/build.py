@@ -280,6 +280,14 @@ def step_ghidra(L, out, game_re):
     log(f"named runtime helpers: {', '.join(n for n, _ in found.values())}")
 
 
+def step_retype(L, out, game_re):
+    """Name fields read from values that shared generic code returns (udk/retype.py); comments only."""
+    from udk import retype
+    if os.path.isdir(os.path.join(out, "code", "decomp")):
+        n, files = retype.run(out)
+        log(f"retype: {n} lines annotated in {files} files")
+
+
 def step_native(L, out, game_re):
     """Decompile the game's own native plugins (udk/native.py). SDK plugins bound by P/Invoke too are
     listed in native/plugins.tsv but not decompiled unless L["native"] (a regex over file names) says so."""
@@ -448,10 +456,10 @@ def step_index(L, out, game_re):
 
 STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
          "assets": step_assets, "shaders": step_shaders, "settings": step_settings, "normalize": step_normalize,
-         "native": step_native, "index": step_index}
+         "native": step_native, "retype": step_retype, "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,native,index", types=None,
+def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,retype,native,index", types=None,
          native=None):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
