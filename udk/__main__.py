@@ -389,6 +389,23 @@ def cmd_prefab(a):
     prefab.print_prefab(dump_root(a), a.spec, a.n, a.v)
 
 
+def image_colours(path, k=6):
+    """Main colours of an image as 'hex share%', most common first, over pixels that are not
+    transparent (alpha < 16 is skipped, so a glow sprite reports its glow, not the empty frame)."""
+    from PIL import Image
+    im = Image.open(path).convert("RGBA")
+    im.thumbnail((96, 96))
+    px = [p for p in (im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata()) if p[3] >= 16]
+    if not px:
+        return "all transparent"
+    opaque = Image.new("RGB", (len(px), 1))
+    opaque.putdata([p[:3] for p in px])
+    q = opaque.quantize(colors=k)
+    pal = q.getpalette()
+    counts = sorted(q.getcolors(), reverse=True)
+    return ", ".join(f"#{pal[3 * i]:02x}{pal[3 * i + 1]:02x}{pal[3 * i + 2]:02x} {100 * n // len(px)}%" for n, i in counts)
+
+
 def cmd_asset(a):
     """Raw YAML of the objects in matching assets (all, or only one component type), or an image's size."""
     root = dump_root(a)
@@ -408,7 +425,8 @@ def cmd_asset(a):
             with open(p, "rb") as fh:
                 head = fh.read(32)
             size = struct.unpack(">II", head[16:24]) if head[:8] == b"\x89PNG\r\n\x1a\n" else None
-            print(f"{rel}\t{'%dx%d' % size if size else '?'}\t{os.path.getsize(p)} bytes")
+            print(f"{rel}\t{'%dx%d' % size if size else '?'}\t{os.path.getsize(p)} bytes"
+                  + (f"\tcolours {image_colours(p)}" if a.colors else ""))
             continue
         with open(p, encoding="utf-8", errors="replace") as fh:
             docs = re.split(r"(?m)^(?=--- !u!)", fh.read())
@@ -494,6 +512,7 @@ def main():
     p.add_argument("-c", help="component type regex, e.g. ParticleSystem, Transform, Material")
     p.add_argument("-n", type=int, default=3)
     p.add_argument("--chars", type=int, default=20000, help="cut each object's YAML at this length")
+    p.add_argument("--colors", action="store_true", help="for images: main colours of the opaque pixels")
     p.set_defaults(fn=cmd_asset)
     p = sub.add_parser("objects", help="find GameObjects by name in every prefab and scene")
     p.add_argument("name", help="regex over GameObject names (whole name)")
