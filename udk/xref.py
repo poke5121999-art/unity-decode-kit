@@ -23,26 +23,34 @@ def functions(root):
     if not os.path.exists(cache):
         with open(os.path.join(root, "inspector", "metadata.json"), encoding="utf-8") as fh:
             am = json.load(fh)["addressMap"]
-        rows = {}
+        rows, shared = {}, {}
         for key in ("methodDefinitions", "constructedGenericMethods"):
             for m in am.get(key, []):
                 group = m.get("group", "").split("/")[-1]
-                rows.setdefault(int(m["virtualAddress"], 16), f"{group}: {m.get('dotNetSignature', m['name'])}")
+                a = int(m["virtualAddress"], 16)
+                rows.setdefault(a, f"{group}: {m.get('dotNetSignature', m['name'])}")
+                shared[a] = shared.get(a, 0) + 1
+        for a in am.get("functionAddresses", []):  # every function start, named or not: site boundaries
+            a = int(a, 16) if isinstance(a, str) else int(a)
+            if a and a not in rows:
+                rows[a] = ""
+                shared[a] = 0
         infos = {int(m["virtualAddress"], 16): int(m["methodAddress"], 16) for m in am.get("methodInfoPointers", [])
                  if m.get("methodAddress")}
         with open(cache, "w", encoding="utf-8") as fh:
             for a in sorted(rows):
-                fh.write(f"{a:x}\t{rows[a]}\n")
+                fh.write(f"{a:x}\t{shared[a]}\t{rows[a]}\n")
         with open(os.path.join(root, "code", "methodinfos.tsv"), "w", encoding="utf-8") as fh:
             for info, code in sorted(infos.items()):
                 fh.write(f"{info:x}\t{code:x}\n")
-    starts, labels = [], []
+    starts, labels, shared = [], [], []
     with open(cache, encoding="utf-8") as fh:
         for line in fh:
-            a, label = line.rstrip("\n").split("\t", 1)
+            a, n, label = line.rstrip("\n").split("\t", 2)
             starts.append(int(a, 16))
-            labels.append(label)
-    return starts, labels
+            shared.append(int(n))
+            labels.append(label or f"unnamed function at 0x{int(a, 16):X}")
+    return starts, labels, shared
 
 
 def method_infos(root, code_addr):
@@ -133,9 +141,16 @@ def binary_path(root):
     return fixed if os.path.exists(fixed) else m.group(1)
 
 
+def shared_count(root, addr):
+    """How many methods share this code address (identical code folding merges tiny bodies)."""
+    starts, _, shared = functions(root)
+    i = bisect.bisect_left(starts, addr)
+    return shared[i] if i < len(starts) and starts[i] == addr else 0
+
+
 def xrefs(root, binary, addr):
-    """[(site, kind, containing method label)] for code address addr and its MethodInfo pointers."""
-    starts, labels = functions(root)
+    """[(site, kind, containing function label)] for code address addr and its MethodInfo pointers."""
+    starts, labels, _ = functions(root)
     targets = [addr] + method_infos(root, addr)
     with open(binary, "rb") as fh:
         b = fh.read()

@@ -130,6 +130,15 @@ def cmd_callers(a):
         seen = {c for (_, _, c) in by_method}
         for m in methods(root):
             if m["c_name"].startswith(t + "_") and m["signature"].split("(")[0].split()[-1] in names and binary:
+                n_shared = xref.shared_count(root, int(m["address"], 16))
+                if n_shared > 1:
+                    # Folded body: Ghidra names it after one of the methods sharing it, so calls are
+                    # found by that name and kept when the receiver is declared as this type.
+                    for key, texts in folded_callers(root, m, short).items():
+                        by_method.setdefault(key, []).extend(texts)
+                    print(f"note: {m['signature']} shares its code with {n_shared - 1} other methods; "
+                          "callers found by receiver type, binary references omitted")
+                    continue
                 for site, how, label in xref.xrefs(root, binary, int(m["address"], 16)):
                     sig = label.split(": ", 1)[-1]
                     if sig not in seen:
@@ -142,6 +151,36 @@ def cmd_callers(a):
             print("    " + t_[:200])
     if len(by_method) > a.n:
         print(f"... {len(by_method) - a.n} more; raise -n")
+
+
+def folded_callers(root, m, short):
+    """Calls to a folded method body under the name Ghidra gave it, whose first argument is
+    declared (or cast) as the method's own type."""
+    path = os.path.join(root, "code", "decomp", m["file"])
+    with open(path, encoding="utf-8") as fh:
+        head = fh.read().split("\n")[int(m["line"]):int(m["line"]) + 8]
+    names = [re.search(r"::(\w+)\s*$", h) or re.search(r"::(\w+)\s*\(", h) for h in head]
+    name = next((n.group(1) for n in names if n), None)
+    if not name:
+        return {}
+    rx = rf"\b{re.escape(name)}\s*\(\s*(?:\(([\w ]+)\*\)\s*)?(\w+)"
+    r = subprocess.run([RG, "-n", "-P", rx, os.path.join(root, "code", "decomp")], capture_output=True, text=True)
+    found, cache = {}, {}
+    for line in r.stdout.splitlines():
+        p, no, text = line.split(":", 2)
+        mm = re.search(rx, text)
+        if not mm:
+            continue
+        if p not in cache:
+            with open(p, encoding="utf-8") as fh:
+                cache[p] = fh.read().split("\n")
+        lines, no = cache[p], int(no)
+        k = max((i for i, h in enumerate(lines[:no]) if h.startswith("// ") and "  @0x" in h), default=0)
+        cast, var = (mm.group(1) or "").strip(), mm.group(2)
+        body = "\n".join(lines[k:no])
+        if cast == short or (not cast and re.search(rf"\b{re.escape(short)}\s*\*\s*{re.escape(var)}\b", body)):
+            found.setdefault((os.path.relpath(p, root), k + 1, lines[k][3:].split("  @0x")[0]), []).append(text.strip())
+    return found
 
 
 def cmd_settings(a):
