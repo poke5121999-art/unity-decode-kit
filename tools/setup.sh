@@ -54,6 +54,6 @@ cd "$KIT"
 [ -x .venv/bin/python ] || timeout 600 uv venv -q -p 3.13 .venv
 WHEELS="$TP/ghidra_12.2_PUBLIC/Ghidra/Features/PyGhidra/pypkg/dist"
 timeout 600 uv pip install -q -p .venv/bin/python --no-index --find-links "$WHEELS" pyghidra jpype1
-timeout 600 uv pip install -q -p .venv/bin/python UnityPy capstone pefile lz4 pycryptodome frida frida-tools
+timeout 600 uv pip install -q -p .venv/bin/python UnityPy capstone pefile lz4 pycryptodome frida frida-tools pyyaml
 (cd tools/spine && [ -d node_modules ] || timeout 600 npm install --silent --no-audit --no-fund)
 echo "setup ok"
