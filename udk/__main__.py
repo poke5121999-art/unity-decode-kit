@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RG = os.path.join(KIT, "third_party", "rg")
+RG = os.environ.get("UDK_RG") or os.path.join(KIT, "third_party", "rg")
 KINDS = {
     "code": "code/decomp",
     "types": "code/types.cs",

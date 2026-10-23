@@ -60,7 +60,10 @@ def worker(chunk):
     ifc.openProgram(currentProgram)
     mon = ConsoleTaskMonitor()
     for group, methods in chunk:
-        rel = group.replace(".dll/", "/", 1).replace("<", "_").replace(">", "_") + ".c"
+        rel = group.replace(".dll/", "/", 1) + ".c"
+        # Obfuscated type names hold chars illegal in Windows paths (control bytes, <>:"|?*\).
+        # Sanitize each path component but keep "/" as the directory separator.
+        rel = "/".join(re.sub(r'[<>:"|?*\\\x00-\x1f]', "_", p)[:120] for p in rel.split("/"))
         path = os.path.join(out_dir, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         lines = []

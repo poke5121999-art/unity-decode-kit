@@ -40,6 +40,8 @@ getSourceFile = lambda: java.io.File(os.path.join(inspector_dir, "il2cpp_ghidra.
 from ghidra.app.cmd.function import FunctionRenameOption  # noqa: E402
 
 bad_sigs = [0]
+bad_methods = [0]
+dup_names = [0]
 
 
 def set_function_type(self, address, type):
@@ -58,7 +60,12 @@ _add_to_group = GhidraDisassemblerInterface.add_function_to_group
 
 def add_function_to_group(self, address, group):
     # Assembly names may hold spaces ("SteamNetworkingSockets Transport for ....dll").
-    _add_to_group(self, address, "/".join(SymbolUtilities.replaceInvalidChars(p, True) for p in group.split("/")))
+    # ICF-folded methods share one address: a second method naming it the same way makes Ghidra
+    # raise DuplicateNameException. The body is shared, so skipping the duplicate loses nothing.
+    try:
+        _add_to_group(self, address, "/".join(SymbolUtilities.replaceInvalidChars(p, True) for p in group.split("/")))
+    except Exception:
+        dup_names[0] += 1
 
 
 GhidraDisassemblerInterface.add_function_to_group = add_function_to_group
@@ -120,16 +127,23 @@ for i, m in enumerate(game, 1):
     if a == 0:
         continue
     seen.add(a)
-    backend.define_function(a)
-    context.define_il_method(m)
+    try:
+        backend.define_function(a)
+        context.define_il_method(m)
+    except Exception:
+        bad_methods[0] += 1
     if i % 5000 == 0:
         log(f"typed {i}/{len(game)}")
 for m in generic_game:
     a = int(m["virtualAddress"], 16)
     seen.add(a)
-    backend.define_function(a)
-    context.define_il_method(m)
-log(f"game methods typed, {bad_sigs[0]} signatures failed to parse")
+    try:
+        backend.define_function(a)
+        context.define_il_method(m)
+    except Exception:
+        bad_methods[0] += 1
+log(f"game methods typed, {bad_sigs[0]} signatures failed to parse, "
+    f"{bad_methods[0]} methods skipped, {dup_names[0]} duplicate names skipped")
 
 # Functions created without analysis have one-byte bodies, so Ghidra cannot tell that a jmp to
 # another method is a tail call and the decompiler inlines the callee. Disassemble each game
