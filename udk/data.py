@@ -92,7 +92,8 @@ def best_xor(b):
 
 class KeyRing:
     """Candidate repeating XOR keys, taken from the game's own string literals.
-    A key that decoded one file is tried first on the next."""
+    A key that decoded one file is tried first on the next; when none of those reads well, every
+    literal is tried and the one whose output reads best wins (a wrong key can still print)."""
 
     def __init__(self, literals=()):
         seen = set()
@@ -104,17 +105,25 @@ class KeyRing:
         self.hits = []
 
     def find(self, b):
+        """(key, share of everyday text bytes in its output), or (None, 0)."""
         try:
             text = b[:4096].decode("utf-8")
         except UnicodeDecodeError:
             text = None
-        for key in self.hits + self.keys:
+        best = (None, 0.6)
+        for i, key in enumerate(self.hits + self.keys):
+            if i == len(self.hits) and best[1] > GOOD_TEXT:
+                break  # a key that worked on a sibling file reads well here too
             out = xor_key(b[:4096], text, key, check_only=True)
-            if out is not None and text_score(out) > 0.98 and common_share(out) > 0.6:
-                if key not in self.hits:
-                    self.hits.insert(0, key)
-                return key
-        return None
+            if out is not None and text_score(out) > 0.98 and common_share(out) > best[1]:
+                best = (key, common_share(out))
+        if best[0] is not None and best[0] not in self.hits:
+            self.hits.insert(0, best[0])
+        return best if best[0] is not None else (None, 0.0)
+
+
+FORMAT = "2: best-reading xor key wins"  # bump when decoding changes, so old dumps redo the data step
+GOOD_TEXT = 0.8  # share of everyday bytes in real CSV/JSON/Lua text; garbage that prints scores lower
 
 
 def common_share(b):
@@ -154,7 +163,9 @@ def peel(b, ring=None, depth=0):
         return b, [], text_kind(b)
     if depth < 2:
         k, sc = best_xor(b)
-        if k is not None and sc > 0.98:
+        single = common_share(b[:4096].translate(XOR_TABLES[k])) if k is not None and sc > 0.98 else 0.0
+        key, share = ring.find(b) if ring and single < GOOD_TEXT else (None, 0.0)
+        if single > 0 and (key is None or single >= share):
             out, layers, kind = peel(b.translate(XOR_TABLES[k]), ring, depth + 1)
             return out, [f"xor 0x{k:02X}"] + layers, kind
         for magic, name, fn in UNWRAP:
@@ -165,8 +176,7 @@ def peel(b, ring=None, depth=0):
                         return out, [f"xor 0x{k:02X}", name] + layers, kind
                     except Exception:
                         pass
-        key = ring.find(b) if ring else None
-        if key is not None:
+        if key is not None and share > single:
             try:
                 text = b.decode("utf-8")
             except UnicodeDecodeError:

@@ -190,7 +190,10 @@ TEXT_ASSET_EXT = (".bytes", ".txt", ".json", ".xml", ".csv", ".lua", ".yaml", ".
 def step_data(L, out, game_re):
     from udk import data
     d = os.path.join(out, "data")
-    if os.path.exists(os.path.join(d, "report.tsv")):
+    report, marker = os.path.join(d, "report.tsv"), os.path.join(d, "format")
+    done = os.path.join(out, "logs", "assets.done")
+    if os.path.exists(report) and read_text(marker) == data.FORMAT and \
+            not (os.path.exists(done) and os.path.getmtime(done) > os.path.getmtime(report)):
         return
     items = list(data.files_under(L["loose"]))
     text_assets = os.path.join(out, "assets", "ExportedProject", "Assets")
@@ -201,6 +204,8 @@ def step_data(L, out, game_re):
                 continue  # AssetRipper names a folder after a bundle path ending in .bytes
             items.append((os.path.join("TextAsset", os.path.relpath(p, text_assets)), open(p, "rb").read()))
     rows = data.run(items, d, literals(out))
+    with open(marker, "w") as fh:
+        fh.write(data.FORMAT + "\n")
     log(f"data: {len(rows)} files, {sum(1 for r in rows if r[1] != '-')} unwrapped")
 
 
