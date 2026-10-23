@@ -311,16 +311,17 @@ def restore_typedef_types(b, reg, meta, typedef_size=92):
 
 
 def append_segment(b, data, align=0x1000):
-    """Append data at the end of the file and map it read-only through a PT_NULL program header
-    (sanitize() leaves some), above every other address. Returns its virtual address."""
+    """Append data at the end of the file and map it read-only, above every other address, through a
+    PT_NULL program header (sanitize() leaves some) or else PT_GNU_STACK / PT_NOTE, which static
+    readers do not need; the copy is for analysis only. Returns its virtual address."""
     is64, end, phoff, phentsize, phnum, ph, *_ = _layout(b)
-    top, slot = 0, None
+    top, free = 0, {}
     for i in range(phnum):
         f = struct.unpack_from(ph, b, phoff + i * phentsize)
         p_type, vaddr, memsz = (f[0], f[3], f[6]) if is64 else (f[0], f[2], f[5])
         top = max(top, vaddr + memsz)
-        if p_type == PT_NULL and slot is None:
-            slot = i
+        free.setdefault(p_type, i)
+    slot = next((free[t] for t in (PT_NULL, 0x6474E551, 4) if t in free), None)  # NULL, GNU_STACK, NOTE
     if slot is None:
         raise ValueError("no free program header to map appended data")
     off = (len(b) + align - 1) // align * align
@@ -452,7 +453,8 @@ def repair_module_names(b, modules, n_modules, meta, version=24):
             base = append_segment(b, bytes(blob))
         except ValueError:  # no free program header: point at an existing copy of each name instead
             raw = bytes(b)
-            for a, rel in places.items():
+            done = []
+            for (a, rel), name in zip(places.items(), fixes):
                 nm = bytes(blob[rel:blob.index(b"\0", rel) + 1])
                 hit = raw.find(nm)
                 while hit > 0 and raw[hit - 1] != 0:
@@ -460,7 +462,8 @@ def repair_module_names(b, modules, n_modules, meta, version=24):
                 va = off_to_va(segs, hit) if hit > 0 else None
                 if va is not None:
                     struct.pack_into("<I", b, a, va)
-            return fixes
+                    done.append(name)
+            return done
         for a, rel in places.items():
             struct.pack_into("<I", b, a, base + rel)
     return fixes
