@@ -18,6 +18,14 @@ SHAPES = {
 }
 HEADER = re.compile(r"^// .*  @(0x[0-9a-fA-F]+)$")
 NOISE = re.compile(r"^/\* WARNING: Unknown calling convention -- yet parameter storage is locked \*/\n", re.M)
+# Compiler-inserted IL2CPP lazy-init guards: pure boilerplate before the real body, present in
+# almost every method. Drop them so a reader sees the logic. Both blocks are brace-balanced.
+GUARD_RTC = re.compile(
+    r"[ \t]*if \(\*\(int \*\)&\(TypeInfo__\w+->_1\)\.field_0x1c == 0\) \{\n"
+    r"[ \t]*il2cpp_runtime_class_init\(\);\n[ \t]*\}\n")
+GUARD_META = re.compile(
+    r"[ \t]*if \(DAT_[0-9a-f]+ == '\\0'\) \{\n[ \t]*il2cpp_init_metadata\([^\n]*\);\n"
+    r"[ \t]*DAT_[0-9a-f]+ = '\\x01';\n[ \t]*\}\n")
 
 
 def addr(token):
@@ -63,7 +71,7 @@ def name_helpers(root):
     header_line = {}
     for p in c_files(decomp):
         text = open(p, encoding="utf-8").read()
-        new = NOISE.sub("", tokens.sub(sub, text))
+        new = GUARD_META.sub("", GUARD_RTC.sub("", NOISE.sub("", tokens.sub(sub, text))))
         if new != text:
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(new)
