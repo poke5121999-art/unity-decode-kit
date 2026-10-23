@@ -243,7 +243,7 @@ def cmd_trace(a):
 
 def cmd_build(a):
     from udk import build
-    build.main(a.game, a.out, a.game_re, a.steps, a.types)
+    build.main(a.game, a.out, a.game_re, a.steps, a.types, a.native)
 
 
 def main():
@@ -289,8 +289,9 @@ def main():
     p.add_argument("game")
     p.add_argument("out")
     p.add_argument("--game-re", default=None)
-    p.add_argument("--steps", default="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index")
+    p.add_argument("--steps", default="inspector,settings,normalize,assets,data,audio,shaders,ghidra,native,index")
     p.add_argument("--types", help="ghidra step: decompile only types whose group matches this regex (default: the last run's scope; all: every type)")
+    p.add_argument("--native", help="native step: regex over plugin file names to decompile (default: the game's own)")
     p.set_defaults(fn=cmd_build)
     a = ap.parse_args()
     a.fn(a)

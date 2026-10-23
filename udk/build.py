@@ -216,6 +216,15 @@ def game_assemblies(out):
     return sorted(g for g in groups if g and not lib.match(g))
 
 
+def main_assembly(out):
+    """The game assembly with the most methods."""
+    with open(os.path.join(out, "inspector", "metadata.json"), encoding="utf-8") as fh:
+        groups = [m["group"].split("/")[0] for m in json.load(fh)["addressMap"]["methodDefinitions"]]
+    game = set(game_assemblies(out))
+    from collections import Counter
+    return Counter(g for g in groups if g in game).most_common(1)[0][0]
+
+
 DECOMP_FORMAT = "2: game methods + game generic instances"
 
 
@@ -269,6 +278,42 @@ def step_ghidra(L, out, game_re):
     from udk import code as code_mod
     found = code_mod.name_helpers(out)
     log(f"named runtime helpers: {', '.join(n for n, _ in found.values())}")
+
+
+def step_native(L, out, game_re):
+    """Decompile the game's own native plugins (udk/native.py). SDK plugins bound by P/Invoke too are
+    listed in native/plugins.tsv but not decompiled unless L["native"] (a regex over file names) says so."""
+    from udk import native
+    d = os.path.join(out, "native")
+    if os.path.exists(os.path.join(d, "plugins.tsv")):
+        return
+    dirs = {os.path.dirname(L["game_binary"])}
+    dirs.update(p for p in glob.glob(os.path.join(L["game"], "**", "Plugins", "**"), recursive=True) if os.path.isdir(p))
+    found = native.plugins(sorted(dirs), os.path.join(out, "code", "types.cs"), skip={os.path.realpath(L["game_binary"])})
+    # A plugin is the game's own when its name carries the leading word of the biggest game assembly
+    # (NssMain -> libNssPhysicsPlugin). Assembly-CSharp names no studio, so such games pick none by default.
+    word = re.match(r"[A-Z]+[a-z0-9]*|[a-z0-9]*", main_assembly(out)).group(0).lower()
+    words = {word} - {"assembly", "unity"}
+    pick = re.compile(L["native"]) if L.get("native") else None
+    os.makedirs(d, exist_ok=True)
+    rows = []
+    for path, hits in found:
+        name = os.path.basename(path)
+        own = pick.search(name) if pick else any(w in name.lower() for w in words if len(w) >= 3)
+        rows.append((name, len(hits), "decompiled" if own else "listed", path))
+        if not own:
+            continue
+        lib = os.path.splitext(name)[0]
+        proj = os.path.join(out, "ghidra-native")
+        os.makedirs(proj, exist_ok=True)
+        run([os.path.join(KIT, ".venv", "bin", "pyghidra"), "-X", "mx8g", "--project-path", proj, "--project-name", lib,
+             path, os.path.join(KIT, "tools", "ghidra", "native.py"), os.path.join(d, lib), "4"],
+            3 * 3600, os.path.join(d, lib + ".log"), min_free_gb=6)
+    with open(os.path.join(d, "plugins.tsv"), "w", encoding="utf-8") as fh:
+        fh.write("library	bound_externs	state	path\n")
+        for r in rows:
+            fh.write("\t".join(map(str, r)) + "\n")
+    log(f"native: {sum(r[2] == 'decompiled' for r in rows)} plugins decompiled, {len(rows)} bound by P/Invoke")
 
 
 def step_normalize(L, out, game_re):
@@ -403,10 +448,11 @@ def step_index(L, out, game_re):
 
 STEPS = {"inspector": step_inspector, "data": step_data, "audio": step_audio, "ghidra": step_ghidra,
          "assets": step_assets, "shaders": step_shaders, "settings": step_settings, "normalize": step_normalize,
-         "index": step_index}
+         "native": step_native, "index": step_index}
 
 
-def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,index", types=None):
+def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,data,audio,shaders,ghidra,native,index", types=None,
+         native=None):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     if os.path.isfile(game):
@@ -415,6 +461,7 @@ def main(game, out, game_re=None, steps="inspector,settings,normalize,assets,dat
         game = unpack.unpack(game, os.path.join(out, "input"))
     L = find_layout(os.path.abspath(game))
     L["types"] = types
+    L["native"] = native
     log(f"binary {L['binary']}")
     for s in steps.split(","):
         t = time.time()

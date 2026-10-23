@@ -652,3 +652,27 @@ def drop_corrupt_defaults(meta, b, reg):
                 struct.pack_into("<i", m, e + 4, int32)
                 changed += 1
     return bytes(m), changed
+
+
+SHT_DYNSYM = 11
+
+
+def exported_names(b):
+    """Names of the functions and objects an ELF defines in its dynamic symbol table."""
+    is64, end, _, _, _, _, shoff, shentsize, shnum, sh = _layout(b)
+    heads = [struct.unpack_from(sh, b, shoff + i * shentsize) for i in range(shnum)]
+    out = set()
+    for f in heads:
+        if f[1] != SHT_DYNSYM:
+            continue
+        off, size, link = (f[4], f[5], f[6])
+        str_off = heads[link][4]
+        step = 24 if is64 else 16
+        for e in range(off, off + size, step):
+            if is64:
+                name, _, _, shndx = struct.unpack_from(end + "IBBH", b, e)
+            else:
+                name, _, _, _, _, shndx = struct.unpack_from(end + "IIIBBH", b, e)
+            if name and shndx:
+                out.add(bytes(b[str_off + name:b.index(b"\0", str_off + name)]).decode("latin-1"))
+    return out
