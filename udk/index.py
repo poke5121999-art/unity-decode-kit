@@ -14,7 +14,7 @@ def count_lines(path, skip_header=True):
 
 
 def extras(out):
-    """One line per optional output that exists: shaders, audio, settings, normalized mirror."""
+    """One line per optional output that exists: shaders, audio, settings, native plugins, normalized mirror."""
     rows = []
     for rel, f in (("shaders/", "summary.txt"), ("audio/", "summary.txt")):
         p = os.path.join(out, rel, f)
@@ -24,6 +24,13 @@ def extras(out):
     s = os.path.join(out, "settings")
     if os.path.isdir(s):
         rows.append(("settings/", "project settings as shipped: " + ", ".join(sorted(f[:-5] for f in os.listdir(s))) + "."))
+    p = os.path.join(out, "native", "plugins.tsv")
+    if os.path.exists(p):
+        with open(p, encoding="utf-8") as fh:
+            libs = [line.split("\t") for line in fh.read().splitlines()[1:]]
+        done = [r[0] for r in libs if r[2] == "decompiled"]
+        rows.append(("native/", f"native plugins the game binds by P/Invoke: {len(libs)}; decompiled (one .c per class, "
+                                f"`<lib>/functions.tsv`): {', '.join(done) or 'none'}; the rest listed in `plugins.tsv`."))
     n = os.path.join(out, "normalized.log")
     if os.path.exists(n):
         with open(n, encoding="utf-8") as fh:
@@ -35,13 +42,16 @@ def extras(out):
 def write(out, layout):
     code = os.path.join(out, "code")
     methods = count_lines(os.path.join(code, "methods.tsv"))
-    failed = 0
+    failed = bad = retyped = 0
     decomp = os.path.join(code, "decomp")
     for d, _, files in os.walk(decomp):
         for f in files:
             if f.endswith(".c"):
                 with open(os.path.join(d, f), encoding="utf-8") as fh:
-                    failed += fh.read().count("// decompile failed")
+                    text = fh.read()
+                failed += text.count("// decompile failed")
+                bad += text.count("Control flow encountered bad instruction data")
+                retyped += text.count("/* retype: ")
     data_kinds = Counter()
     rp = os.path.join(out, "data", "report.tsv")
     if os.path.exists(rp):
@@ -76,7 +86,8 @@ def write(out, layout):
         "## Contents",
         "",
         f"- `code/types.cs`: every type, field (with offset), property, method address (Il2CppInspectorRedux).",
-        f"- `code/decomp/`: {methods} game methods decompiled by Ghidra, one `.c` per type, {failed} failed. Index `code/methods.tsv`.",
+        f"- `code/decomp/`: {methods} game methods decompiled by Ghidra, one `.c` per type, {failed} failed, {bad} with 'bad instruction data'. "
+        f"{retyped} lines carry `/* retype: v: T; 0xNN = field */`, the real field behind a value typed by shared generic code. Index `code/methods.tsv`.",
         f"- `data/`: {sum(data_kinds.values())} loose data files; wrappers found: "
         + ", ".join(f"{k[0]} → {k[1]} ×{v}" for k, v in data_kinds.most_common()) + ". Per file: `data/report.tsv`.",
         f"- `assets/ExportedProject/`: AssetRipper Unity project; {sum(assets.values())} files. {refs} references in `assets/refs.tsv`.",
