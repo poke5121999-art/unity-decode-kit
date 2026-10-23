@@ -164,6 +164,9 @@ def literals(out):
         return [s["string"] for s in json.load(fh)["addressMap"]["stringLiterals"]]
 
 
+TEXT_ASSET_EXT = (".bytes", ".txt", ".json", ".xml", ".csv", ".lua", ".yaml", ".html")
+
+
 def step_data(L, out, game_re):
     from udk import data
     d = os.path.join(out, "data")
@@ -172,8 +175,8 @@ def step_data(L, out, game_re):
     items = list(data.files_under(L["loose"]))
     text_assets = os.path.join(out, "assets", "ExportedProject", "Assets")
     if os.path.isdir(text_assets):
-        for p in glob.glob(os.path.join(text_assets, "**", "*.bytes"), recursive=True) + \
-                glob.glob(os.path.join(text_assets, "**", "*.txt"), recursive=True):
+        # AssetRipper names a TextAsset by its detected content: .bytes, .txt, .json, .xml, .csv...
+        for p in [q for ext in TEXT_ASSET_EXT for q in glob.glob(os.path.join(text_assets, "**", "*" + ext), recursive=True)]:
             if not os.path.isfile(p):
                 continue  # AssetRipper names a folder after a bundle path ending in .bytes
             items.append((os.path.join("TextAsset", os.path.relpath(p, text_assets)), open(p, "rb").read()))
