@@ -124,10 +124,20 @@ def cmd_callers(a):
             if var and not re.search(rf"\b{short}\s*\*\s*{re.escape(var.group(1))}\b", body):
                 continue  # same field name on another type
         by_method.setdefault((os.path.relpath(path, root), k + 1, caller), []).append(text.strip())
+    if names and own:  # machine-code references the decompiler did not name (delegates, tail jumps)
+        from udk import xref
+        binary = xref.binary_path(root)
+        seen = {c for (_, _, c) in by_method}
+        for m in methods(root):
+            if m["c_name"].startswith(t + "_") and m["signature"].split("(")[0].split()[-1] in names and binary:
+                for site, how, label in xref.xrefs(root, binary, int(m["address"], 16)):
+                    sig = label.split(": ", 1)[-1]
+                    if sig not in seen:
+                        by_method.setdefault(("binary", 0, sig), []).append(f"{how} at 0x{site:X} in {label}")
     kind = "calls or backing-field uses" if names else "field uses"
     print(f"{len(by_method)} methods with {kind} of {a.spec}")
     for (path, line, caller), texts in list(by_method.items())[: a.n]:
-        print(f"### {path}:{line}  {caller}")
+        print(f"### {path}:{line}  {caller}" if path != "binary" else f"### (binary only, not in decomp)  {caller}")
         for t_ in texts[:3]:
             print("    " + t_[:200])
     if len(by_method) > a.n:

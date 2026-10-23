@@ -34,6 +34,15 @@ for m in meta["methodDefinitions"]:
     if type_re and not type_re.search(group):
         continue
     by_type[group].append(m)
+owned = {m["virtualAddress"] for ms in by_type.values() for m in ms}
+for m in meta["constructedGenericMethods"]:  # one body per address: shared generic code once
+    group = m.get("group", "")
+    if m["virtualAddress"] in owned or m["virtualAddress"] == "0x0000000000000000" or not game_re.match(group.split("/")[0]):
+        continue
+    if type_re and not type_re.search(group):
+        continue
+    owned.add(m["virtualAddress"])
+    by_type[group].append(m)
 del meta
 log(f"{sum(map(len, by_type.values()))} methods in {len(by_type)} types")
 

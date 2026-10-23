@@ -76,7 +76,19 @@ def is_game(m):
 
 game = [m for m in meta["methodDefinitions"] if is_game(m)]
 rest = [m for m in meta["methodDefinitions"] if not is_game(m)]
-log(f"methods: game={len(game)} other={len(rest)} generic={len(meta['constructedGenericMethods'])}")
+# Generic instances of game code (ApplyDotEffect<T>...) get typed and decompiled like game methods;
+# instances sharing one body (shared generics) are kept once.
+generic_game, generic_rest, owned = [], [], {int(m["virtualAddress"], 16) for m in game}
+for m in meta["constructedGenericMethods"]:
+    a = int(m["virtualAddress"], 16)
+    if is_game(m):
+        if a and a not in owned:
+            generic_game.append(m)
+            owned.add(a)
+    else:
+        generic_rest.append(m)
+log(f"methods: game={len(game)} other={len(rest)} generic={len(meta['constructedGenericMethods'])} "
+    f"(game bodies {len(generic_game)})")
 
 symtab = currentProgram.getSymbolTable()
 seen = set()
@@ -100,7 +112,7 @@ def name_only(m):
 for m in rest:
     name_only(m)
 log("other methods named")
-for m in meta["constructedGenericMethods"]:
+for m in generic_rest:
     name_only(m)
 log("generic instances named")
 for i, m in enumerate(game, 1):
@@ -112,6 +124,11 @@ for i, m in enumerate(game, 1):
     context.define_il_method(m)
     if i % 5000 == 0:
         log(f"typed {i}/{len(game)}")
+for m in generic_game:
+    a = int(m["virtualAddress"], 16)
+    seen.add(a)
+    backend.define_function(a)
+    context.define_il_method(m)
 log(f"game methods typed, {bad_sigs[0]} signatures failed to parse")
 
 # Functions created without analysis have one-byte bodies, so Ghidra cannot tell that a jmp to
@@ -123,7 +140,7 @@ from ghidra.program.model.listing import FlowOverride  # noqa: E402
 fm = currentProgram.getFunctionManager()
 listing = currentProgram.getListing()
 tails = 0
-for i, m in enumerate(game, 1):
+for i, m in enumerate(game + generic_game, 1):
     a = int(m["virtualAddress"], 16)
     if a == 0:
         continue
@@ -139,7 +156,7 @@ for i, m in enumerate(game, 1):
             ins.setFlowOverride(FlowOverride.CALL_RETURN)
             tails += 1
     if i % 5000 == 0:
-        log(f"bodies {i}/{len(game)}")
+        log(f"bodies {i}/{len(game) + len(generic_game)}")
 log(f"function bodies fixed, {tails} tail calls marked")
 
 for d in meta["stringLiterals"]:

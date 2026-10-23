@@ -182,10 +182,17 @@ def game_assemblies(out):
     return sorted(g for g in groups if g and not lib.match(g))
 
 
+DECOMP_FORMAT = "2: game methods + game generic instances"
+
+
 def step_ghidra(L, out, game_re):
-    code = os.path.join(out, "code", "decomp")
-    if os.path.exists(os.path.join(out, "code", "methods.tsv")):
+    final = os.path.join(out, "code", "decomp")
+    marker = os.path.join(out, "code", "decomp.format")
+    if os.path.exists(os.path.join(out, "code", "methods.tsv")) and os.path.exists(marker) and \
+            open(marker).read().strip() == DECOMP_FORMAT:
         return
+    code = final + ".next"  # the old output stays readable until the new one is complete
+    shutil.rmtree(code, ignore_errors=True)
     if not game_re:
         names = game_assemblies(out)
         log(f"game assemblies: {', '.join(names)}")
@@ -200,7 +207,14 @@ def step_ghidra(L, out, game_re):
         open(os.path.join(proj, "prepared"), "w").close()
     run(base + [os.path.join(KIT, "tools", "ghidra", "decompile.py"), os.path.join(out, "inspector"), game_re, code, "6"],
         6 * 3600, os.path.join(proj, "decompile.log"), min_free_gb=6)
-    shutil.move(os.path.join(code, "methods.tsv"), os.path.join(out, "code", "methods.tsv"))
+    shutil.move(os.path.join(code, "methods.tsv"), os.path.join(out, "code", "methods.tsv.next"))
+    if os.path.isdir(final):
+        os.rename(final, final + ".old")
+    os.rename(code, final)
+    os.replace(os.path.join(out, "code", "methods.tsv.next"), os.path.join(out, "code", "methods.tsv"))
+    shutil.rmtree(final + ".old", ignore_errors=True)
+    with open(marker, "w") as fh:
+        fh.write(DECOMP_FORMAT + "\n")
     from udk import code as code_mod
     found = code_mod.name_helpers(out)
     log(f"named runtime helpers: {', '.join(n for n, _ in found.values())}")
