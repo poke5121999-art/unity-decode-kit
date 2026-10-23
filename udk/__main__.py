@@ -1,6 +1,6 @@
 """udk: query a decoded Unity game dump instead of watching clips.
 
-  udk q <regex> [-k code|types|data|assets|audio|shaders] [-n N]   search everything, grouped by kind
+  udk q <regex> [-k code|types|data|assets|audio|shaders|settings|native] [-n N]   search everything, grouped by kind
   udk method <Type.Method | regex>                    print decompiled bodies
   udk type <Type>                                     print the type with fields, offsets, defaults
   udk refs <asset path or name regex>                 what an asset uses and what uses it
@@ -27,6 +27,7 @@ KINDS = {
     "audio": "audio",
     "shaders": "shaders",
     "settings": "settings",
+    "native": "native",
 }
 csv.field_size_limit(1 << 30)
 
@@ -42,8 +43,10 @@ def cmd_q(a):
         path = os.path.join(root, KINDS[k])
         if not os.path.exists(path):
             continue
-        r = subprocess.run([RG, "-n", "-i", "-m", "3", "--max-columns", "220", "--max-columns-preview",
-                            "-g", "!*.meta", "-g", "!*.png", "-g", "!wwnames.txt", a.pattern, path],
+        # data keeps binary tables (localization .bytes) whose strings are still worth finding
+        r = subprocess.run([RG, "-n", "-i", "-m", "3", "--max-columns", "220", "--max-columns-preview"]
+                           + (["-a"] if k == "data" else []) +
+                           ["-g", "!*.meta", "-g", "!*.png", "-g", "!wwnames.txt", a.pattern, path],
                            capture_output=True, text=True)
         lines = r.stdout.splitlines()
         print(f"== {k}: {len(lines)} hits" + (f" (showing {a.n})" if len(lines) > a.n else ""))
@@ -67,9 +70,19 @@ def cmd_method(a):
         hits = [m for m in methods(root) if rx.search(display(m))]
     else:
         hits = [m for m in methods(root) if spec in display(m)]
+    hits += native_functions(root, spec)
     if not hits:
         sys.exit(f"no method matches {spec!r}")
     for m in hits[: a.n]:
+        if m.get("native"):
+            path = os.path.join(root, "native", m["native"], m["file"])
+            with open(path, encoding="utf-8") as fh:
+                lines = fh.read().split("\n")
+            i = int(m["line"]) - 1
+            j = next((k for k in range(i + 1, len(lines)) if lines[k].startswith("// ") and "  @0x" in lines[k]), len(lines))
+            print(f"### native/{m['native']}/{m['file']}:{m['line']}")
+            print("\n".join(lines[i:j]).rstrip() + "\n")
+            continue
         path = os.path.join(root, "code", "decomp", m["file"])
         with open(path, encoding="utf-8") as fh:
             lines = fh.read().split("\n")
@@ -110,6 +123,24 @@ def same_offset(root, other, field, mine):
     if off is None:
         return f"{other}.{field}: offset not found"
     return f"{other}.{field} is at 0x{off:x}; in {mine} that offset holds {find(mine).get(off, '?')}"
+
+
+def native_functions(root, spec):
+    """Functions of decompiled native plugins (native/<lib>/functions.tsv) whose name matches spec."""
+    base = os.path.join(root, "native")
+    if not os.path.isdir(base):
+        return []
+    rx = re.compile(spec) if any(c in spec for c in "^$|*[\\") else None
+    out = []
+    for lib in sorted(os.listdir(base)):
+        tsv = os.path.join(base, lib, "functions.tsv")
+        if not os.path.exists(tsv):
+            continue
+        with open(tsv, encoding="utf-8") as fh:
+            for r in csv.DictReader(fh, delimiter="\t"):
+                if (rx.search(r["name"]) if rx else spec in r["name"]):
+                    out.append({"native": lib, "file": r["file"], "line": r["line"], "name": r["name"]})
+    return out
 
 
 def cmd_callers(a):

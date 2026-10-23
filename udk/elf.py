@@ -659,9 +659,14 @@ SHT_DYNSYM = 11
 
 def exported_names(b):
     """Names of the functions and objects an ELF defines in its dynamic symbol table."""
+    return set(exported_symbols(b))
+
+
+def exported_symbols(b):
+    """{name: address} of what an ELF defines in its dynamic symbol table."""
     is64, end, _, _, _, _, shoff, shentsize, shnum, sh = _layout(b)
     heads = [struct.unpack_from(sh, b, shoff + i * shentsize) for i in range(shnum)]
-    out = set()
+    out = {}
     for f in heads:
         if f[1] != SHT_DYNSYM:
             continue
@@ -670,9 +675,41 @@ def exported_names(b):
         step = 24 if is64 else 16
         for e in range(off, off + size, step):
             if is64:
-                name, _, _, shndx = struct.unpack_from(end + "IBBH", b, e)
+                name, _, _, shndx, value = struct.unpack_from(end + "IBBHQ", b, e)
             else:
-                name, _, _, _, _, shndx = struct.unpack_from(end + "IIIBBH", b, e)
+                name, value, _, _, _, shndx = struct.unpack_from(end + "IIIBBH", b, e)
             if name and shndx:
-                out.add(bytes(b[str_off + name:b.index(b"\0", str_off + name)]).decode("latin-1"))
+                out[bytes(b[str_off + name:b.index(b"\0", str_off + name)]).decode("latin-1")] = value
     return out
+
+
+SHT_REL = 9
+
+
+def plt_target_symbol(b, segs, stub):
+    """Symbol an ARM PLT stub jumps to (add ip, pc, #a; add ip, ip, #b; ldr pc, [ip, #c]!), from the
+    jump-slot relocation of the GOT entry it loads; None when stub is no such stub."""
+    off = va_to_off(segs, stub)
+    if off is None:
+        return None
+    w = struct.unpack_from("<3I", b, off)
+    if (w[0] & 0xFFFFF000) != 0xE28FC000 or (w[1] & 0xFFFFF000) != 0xE28CC000 or (w[2] & 0xFFFFF000) != 0xE5BCF000:
+        return None
+
+    def imm(x):
+        v, rot = x & 0xFF, ((x >> 8) & 0xF) * 2
+        return ((v >> rot) | (v << (32 - rot))) & 0xFFFFFFFF if rot else v
+    got = (stub + 8 + imm(w[0]) + imm(w[1]) + (w[2] & 0xFFF)) & 0xFFFFFFFF
+    is64, end, _, _, _, _, shoff, shentsize, shnum, sh = _layout(b)
+    heads = [struct.unpack_from(sh, b, shoff + i * shentsize) for i in range(shnum)]
+    for f in heads:
+        if f[1] != SHT_REL:
+            continue
+        symtab = heads[f[6]]
+        strtab = heads[symtab[6]][4]
+        for e in range(f[4], f[4] + f[5], 8):
+            r_offset, r_info = struct.unpack_from("<II", b, e)
+            if r_offset == got:
+                name_off = struct.unpack_from("<I", b, symtab[4] + 16 * (r_info >> 8))[0]
+                return bytes(b[strtab + name_off:b.index(b"\0", strtab + name_off)]).decode("latin-1")
+    return None

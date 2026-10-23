@@ -320,6 +320,8 @@ def step_native(L, out, game_re):
         run([os.path.join(KIT, ".venv", "bin", "pyghidra"), "-X", "mx8g", "--project-path", proj, "--project-name", lib,
              path, os.path.join(KIT, "tools", "ghidra", "native.py"), os.path.join(d, lib), "4"],
             3 * 3600, os.path.join(d, lib + ".log"), min_free_gb=6)
+        thunks = native.add_export_thunks(path, os.path.join(d, lib))
+        log(f"native: {name}: {thunks} one-instruction exports mapped to their bodies")
     with open(os.path.join(d, "plugins.tsv"), "w", encoding="utf-8") as fh:
         fh.write("library	bound_externs	state	path\n")
         for r in rows:
