@@ -429,6 +429,8 @@ def cmd_build(a):
 
 
 def main():
+    import signal
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `udk ... | head` ends quietly
     ap = argparse.ArgumentParser(prog="udk", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dump")
     sub = ap.add_subparsers(dest="cmd", required=True)

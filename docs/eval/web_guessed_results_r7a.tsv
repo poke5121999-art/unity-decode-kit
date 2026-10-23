@@ -1,0 +1,29 @@
+id	verdict	evidence
+W001	ANSWERED	udk asset DOTweenSettings: defaultEaseType: 6; udk type Ease: OutQuad = 6. Build default ease is OutQuad, as noted.
+W002	OUT_OF_SCOPE	Headless software-rasterizer frame time on the web remake's test rig; not a property of the client build.
+W003	PARTIAL	Settled: udk settings PlayerSettings ColorSpace=1; udk callers Color.linear/gamma = 0; SetColor callers (33) are UI/DOTween/Outline/Highlight/Cutscene only. Missing: whether Unity loads [HDR] colors as linear is engine behavior, not in decomp.
+W004	OUT_OF_SCOPE	Heading of the remake's own image-matching workflow; no build question.
+W005	PARTIAL	Noise module params are in prefabs (udk asset <fx>.prefab -c ParticleSystem -> NoiseModule). The algorithm (improved Perlin, damping) lives in closed UnityPlayer.dll, not decompiled; udk q -k native has no hits.
+W006	PARTIAL	udk q UseCustomTrailVertexStreams: m_TrailVertexStreams stored per renderer (TitleObject.prefab 00010304); 23 prefabs have flag=1 (note says 16). Ribbon uses-newest-particle rule is engine behavior, not in build code.
+W007	OUT_OF_SCOPE	Legend line of LOUNGE.md saying CHUA RO means insufficient data; no build question.
+W008	ANSWERED	LoungeMapSetting.asset: Width 2 Height 2 SectorIds 2b23,2d23,2a23,2c23 = [9003,9005,9002,9004]; GetSectorOffset = (i%W*30, i/W*30). Cell (0,1) z+30 holds 9002 not 9001. Area1 CameraPos 14:0:45 fits.
+W009	PARTIAL	LoungeMapSetting.asset index0 (0,0) = 9003, matches. GameMapManager.OnPrepareLoad copies all SectorIds with no area check; IsAreaUnlocked callers are only interior UI/purchase. Any area-3 gating of load is not in client code found.
+W010	ANSWERED	udk method GameObjectManager.RefreshCustomerNpcs: count driven by Const CustomerMaxCount 5, CustomerSpawnPercentBase 40, +12 per user, per sector; gate is FeatureUnlock ArtifactDeal (LoungeQuestCleared:80100), not UserLevel>=2. Note is wrong.
+W011	ANSWERED	Predicate in InGameScene+<>c b__65: true if Type in {Quest,Mission} or (Type!=Talk and Purpose==Complete). Purpose Start alone does NOT count; EDialogType has Mission/Talk too. Note partly wrong.
+W012	ANSWERED	Npc.csv 700105 = 'phone booth transparent' at Sector 9001/9002 NPC pos 9.5:0:21; PhoneBoothSpawnDatas 8.896:0:20.99 (0.6 m apart); Common.lua bubble 'go to the diving booth' keyed to 혼령=700105.
+W013	ANSWERED	Premise wrong: client has GameLoungeQuestManager (AddQuest, CompleteQuest, OnGameEventOccured/AddUnlockableQuests/UpdateQuestProgress, GetQuestState) in code/decomp/De.InGame; udk method GameLoungeQuestManager.* gives the rules.
+W014	PARTIAL	GroundNavigation.GenerateMesh: half-width = ((1-s)*t + s) * _ribbonWidth * 0.5, t=|dot(seg dir, ref vec)| clamped 0..1; prefabs set s=1.5 so x1.5 at t=0. Which camera axis is the ref vec not traced in decomp.
+W015	PARTIAL	GameMapManager.PickStageSectorIds(theme, areaType, ...) filters TSector by theme/area type and shuffles; ApplyFixedSectors places FixedSectors by IndexX/Z. 'Playable on web iff art exists' is the remake's own rule.
+W016	ANSWERED	ECampaignCategory = None/Story/Normal/Tutorial; LocalizedText has Tutorial (L242), NormalCampaign (L243), StoryCampaign (L244) in all languages, so labels exist in the build.
+W017	OUT_OF_SCOPE	Character.csv has only IsUsable (100002 false); no unlock column; CharacterCollected condition type has no table user. Ownership is server account state; nothing in client reads CampaignCleared:1100 for characters.
+W018	ANSWERED	GameShopManager.<OnNpcSpawned>b__17_4: AppearProbability<0 always; else GetRandomBool((prob+GradeAppearBonus)/10000) per NPC spawn. StockCount -> Stock/StockMax, <0 = unlimited; Reset on stage close.
+W019	PARTIAL	Client only sends ReqExchangeCoin{Direction, Quantity} (CoinExchangePopupPresenter.OnConfirmAsync) and reads ResExchangeCoin; no rate in Const.csv or client code. Rate is applied server-side; 1:1 is plausible but not confirmed.
+W020	ANSWERED	udk method Extensions.CalculateRestCost: cost = (int64)(RestCost 400 * RestCostMultiplier 2.5 ^ Profile.RestCount), float multiply loop, truncated. Const text: reset by diving.
+W021	ANSWERED	Original applies 4 of 5: SlotCount/SafeSlotCount (PlayerInventory), LightFuelEfficiency (CharacterController.UpdateLightFuel: interval += eff%), ShopProductGradeAppearBonus (GameShopManager). RecoveryItemCount getter has 0 callers.
+W022	ANSWERED	NpcFunction DangerLevel (NPC 700011) opens RoomDifficultyPopup; selects EDifficulty stored on the room (default 1=Normal), applied via Difficulty.csv columns (MonsterHp/Atk, Spawn, Trap, drop %). Not changeable in co-op lounge.
+W023	ANSWERED	ArtifactDealManager.GetDealPrice = max(1, int(GetPriceMultiplierPercent * GoodsExtensions.GetArtifactPrice(goods) / 100)); udk method shows both helpers, GetTagPriceMultiplier too. Original formula is in the client.
+W024	OUT_OF_SCOPE	Client reads Character.SelectedActiveSkillIds from server profile and only validates against GetSelectableActiveSkillIds (GamePlayer.c L304); the new-character default is server-assigned, as noted.
+W025	OUT_OF_SCOPE	Legend line of SKILLVM.md about the CHUA RO section; no build question.
+W026	PARTIAL	udk callers SkillAction.executeTime / ExecuteType: only ctor default (Immediate) and TryResolveExpression text use; no runtime reader found, so ignoring it matches. None@0.18 dash+slash timing not traced.
+W027	ANSWERED	StateChangeEvent.CheckSkillTriggered: Array.IndexOf(States, event.State); Exclude=false triggers if new state in list, true if not. PreviousState is not checked, so 'from a state outside the list' is not required.
+W028	ANSWERED	UnitSkillState.OnEnter: if TSkill.IsBasicAttack then animationTimeScale=logicTimeScale=UnitModel.AtkSpeed else 1.0 (flag, not the tag). Character.csv AtkSpeed = 1 for all 5.
