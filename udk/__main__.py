@@ -39,7 +39,10 @@ def dump_root(a):
 
 def cmd_q(a):
     root = dump_root(a)
-    kinds = [a.kind] if a.kind else list(KINDS)
+    kinds = a.kind.split(",") if a.kind else list(KINDS)
+    bad = [k for k in kinds if k not in KINDS]
+    if bad:
+        sys.exit(f"unknown kind {', '.join(bad)}; kinds: {', '.join(KINDS)}")
     for k in kinds:
         path = os.path.join(root, KINDS[k])
         if not os.path.exists(path):
@@ -71,6 +74,9 @@ def cmd_method(a):
         hits = [m for m in methods(root) if rx.search(display(m))]
     else:
         hits = [m for m in methods(root) if spec in display(m)]
+        if not hits:  # names as the C side spells them: <OnStageStarted>b__39_1 -> _OnStageStarted_b__39_1
+            key = re.sub(r"\W", "", spec.replace(".", ""))
+            hits = [m for m in methods(root) if key in re.sub(r"\W", "", display(m).replace(".", "")) or key in m["c_name"]]
     hits += native_functions(root, spec)
     if not hits:
         sys.exit(f"no method matches {spec!r}")
@@ -436,7 +442,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("q")
     p.add_argument("pattern")
-    p.add_argument("-k", "--kind", choices=list(KINDS))
+    p.add_argument("-k", "--kind", help="one or more of " + ",".join(KINDS) + " (comma-separated)")
     p.add_argument("-n", type=int, default=20)
     p.set_defaults(fn=cmd_q)
     p = sub.add_parser("method")
