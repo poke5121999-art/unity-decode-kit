@@ -21,6 +21,34 @@ def sources(data_dir):
     return [p for n in names for p in glob.glob(os.path.join(data_dir, n))]
 
 
+def log(msg):
+    print(f"[settings] {msg}", flush=True)
+
+
+def read_prefix(o):
+    """Top-level fields of `o` read one by one with its stock type tree until one fails or runs past
+    the object. Fields after a layout change read shifted bytes, hence the note in the output."""
+    from UnityPy.helpers.TypeTreeHelper import TypeTreeConfig, read_value
+    node = o._get_typetree_node()
+    r = o.reader
+    r.Position = o.byte_start
+    config = TypeTreeConfig(True, o.assets_file, False)
+    tree = {}
+    for child in node.m_Children:
+        try:
+            value = read_value(child, r, config)
+        except Exception:  # noqa: BLE001 - the first unreadable field ends the trustworthy prefix
+            break
+        if r.Position - o.byte_start > o.byte_size:
+            break
+        tree[child.m_Name] = value
+    if tree:
+        tree["_udk_partial"] = (f"stock layout does not fit this {o.byte_size}-byte object; fields were read in order "
+                                f"from the start, so early ones are right and later ones may be shifted "
+                                f"({len(tree)} of {len(node.m_Children)} read)")
+    return tree
+
+
 def run(out, data_dir):
     import UnityPy
     d = os.path.join(out, "settings")
@@ -34,16 +62,14 @@ def run(out, data_dir):
                 continue
             try:
                 tree = o.read_typetree()
-            except ValueError:
-                # UnityPy's bundled type tree can be a field off for new editors (6000.3 PlayerSettings
-                # reads 4 bytes past the end); keep what parsed and say so.
-                try:
-                    tree = o.read_typetree(check_read=False)
-                    tree["_udk_partial"] = "type tree did not match the object size; trailing fields may be off"
-                except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
+                # The stock type tree does not fit: UnityPy's tree can be a field off for new editors
+                # (6000.3 PlayerSettings), or the engine is patched (Zing Speed's PlayerSettings and
+                # QualitySettings). Fields read in order from the start stay right up to the change.
+                tree = read_prefix(o)
+                if not tree:
+                    log(f"settings: {name} unreadable with the stock type tree, skipped")
                     continue
-            except Exception:  # noqa: BLE001 - a settings object without a readable tree is skipped
-                continue
             tree = {k: v for k, v in tree.items() if k not in SKIP_FIELDS}
             with open(os.path.join(d, name + ".json"), "w", encoding="utf-8") as fh:
                 json.dump(tree, fh, indent=1, default=str, ensure_ascii=False)

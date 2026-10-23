@@ -4,3 +4,5 @@ out/
 __pycache__/
 *.pyc
 node_modules/
+hs_err_pid*.log
+core.[0-9]*
