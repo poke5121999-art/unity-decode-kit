@@ -26,3 +26,15 @@ giờ nói rõ đã tra những đâu.
 Sau vòng 3, `udk callers` sửa lỗi reviewer chỉ ra (dòng "binary only" gắn sai tên do hàm gộp và hàm không tên)
 và thêm listener UnityEvent trong prefab. W064 và W074 có lời đáp "không dùng": `AnomalyGroupSpawnId` chỉ được
 `Parse`/`ToCsv` chạm tới, hằng `LOOTING_COMPLETED` không có tham chiếu nào.
+
+# Review Zing Speed: câu hỏi bản web `games/toc-do` phải đoán, trả lời bằng `udk`
+
+47 câu (`zs_guessed.tsv`). Mỗi vòng do subagent sonnet làm, chỉ dùng `bin/udk` và dump `out/zs`.
+
+| Vòng | Kit lúc đó | Trả lời được | Một phần | Ngoài phạm vi | Thiếu năng lực công cụ |
+|---|---|---|---|---|---|
+| 1 | decomp lát gameplay trên binary đã gỡ bảo vệ, `native/`, retype | 5 | 27 | 10 | 5: Z002 (shader), Z010 (localization), Z021 (va chạm Havok), Z032 (transform), Z039 (thân method ngoài lát) |
+| sau 1 | + shader blob Zstandard → GLSL, `udk asset` (YAML thô, kích thước ảnh), `method`/`q` tìm cả native, export một lệnh → thân hàm qua PLT, decomp toàn bộ NssMain (đang chạy) | | | | |
+
+Nhiều câu "một phần" là dữ liệu server hoặc bank âm thanh không có trong APK; phần còn lại cần thân method ngoài lát
+gameplay (NssMain đầy đủ đang dịch). Va chạm Havok (`NssHKXData_V00`, tagfile Havok 2014) chưa có bộ đọc.
