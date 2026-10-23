@@ -197,30 +197,75 @@ def remap_guids(root, remap):
     return changed
 
 
-def upgrade(export, project, version):
-    """Copy the export into project, upgraded for editor `version`. Returns report rows."""
+def closure(refs_tsv, roots):
+    """Assets reachable from roots (export-relative paths) through refs.tsv, roots included."""
+    import csv
+    csv.field_size_limit(1 << 30)
+    adj = {}
+    with open(refs_tsv, encoding="utf-8") as fh:
+        for r in csv.DictReader(fh, delimiter="\t"):
+            adj.setdefault(r["src"], set()).add(r["dst"])
+    seen, stack = set(roots), list(roots)
+    while stack:
+        for y in adj.get(stack.pop(), ()):
+            if y not in seen:
+                seen.add(y)
+                stack.append(y)
+    return seen
+
+
+def upgrade(export, project, version, refs_tsv=None, root_patterns=()):
+    """Copy the export into project, upgraded for editor `version`. With root_patterns (regexes
+    over export paths), only what those roots reach through refs_tsv is copied, plus all scripts.
+    Top-level Assets folders the export does not own (the project's own code) are left alone.
+    Returns report rows."""
     editor = editor_root(version)
     swaps, remap, missing, pkgs, rules = plan(export, editor)
     replaced = {asm for asm, *_ in swaps}
-    if os.path.isdir(project):
-        for x in ("Assets", "Packages", "ProjectSettings"):
-            shutil.rmtree(os.path.join(project, x), ignore_errors=True)
-    os.makedirs(project, exist_ok=True)
-
-    def skip(d, names):
-        if os.path.normpath(d) == os.path.normpath(os.path.join(export, "Assets", "Scripts")):
-            return [n for n in names if n in replaced or n in (r + ".meta" for r in replaced)]
-        return []
-
-    shutil.copytree(os.path.join(export, "Assets"), os.path.join(project, "Assets"), ignore=skip)
-    shutil.copytree(os.path.join(export, "ProjectSettings"), os.path.join(project, "ProjectSettings"))
+    src_assets, dst_assets = os.path.join(export, "Assets"), os.path.join(project, "Assets")
+    keep = None
+    if root_patterns:
+        rx = [re.compile(p) for p in root_patterns]
+        with open(refs_tsv.replace("refs.tsv", "guids.tsv"), encoding="utf-8") as fh:
+            paths = [line.rstrip("\n").split("\t", 1)[1] for line in fh if "\t" in line][1:]
+        roots = [p for p in paths if any(r.search(p) for r in rx)]
+        keep = closure(refs_tsv, roots)
+    os.makedirs(dst_assets, exist_ok=True)
+    for top in os.listdir(src_assets):
+        target = os.path.join(dst_assets, top)
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+        elif os.path.exists(target):
+            os.remove(target)
+    copied = 0
+    for d, dirs, fs in os.walk(src_assets):
+        rel_d = os.path.relpath(d, export)
+        if rel_d == os.path.join("Assets", "Scripts"):
+            dirs[:] = [x for x in dirs if x not in replaced]
+        in_scripts = rel_d.startswith(os.path.join("Assets", "Scripts"))
+        for f in fs:
+            if f.endswith(".meta"):
+                continue
+            rel = os.path.join(rel_d, f)
+            if keep is not None and not in_scripts and rel not in keep:
+                continue
+            for name in (f, f + ".meta"):
+                s_, t_ = os.path.join(d, name), os.path.join(project, rel_d, name)
+                if os.path.exists(s_):
+                    os.makedirs(os.path.dirname(t_), exist_ok=True)
+                    shutil.copy2(s_, t_)
+            copied += 1
+    for x in ("ProjectSettings",):
+        shutil.rmtree(os.path.join(project, x), ignore_errors=True)
+        shutil.copytree(os.path.join(export, x), os.path.join(project, x))
     with open(os.path.join(project, "ProjectSettings", "ProjectVersion.txt"), "w") as fh:
         fh.write(f"m_EditorVersion: {version}\n")
-    rows = [("assembly-to-package", asm, f"{name} {ver}: {hit}/{total} scripts remapped")
-            for asm, name, ver, hit, total in swaps]
+    rows = [("assets-copied", "files", f"{copied}" + (f" (closure of {len(roots)} roots)" if root_patterns else ""))]
+    rows += [("assembly-to-package", asm, f"{name} {ver}: {hit}/{total} scripts remapped")
+             for asm, name, ver, hit, total in swaps]
     rows += [("script-not-in-package", asm, cls) for asm, cls in missing]
     rows += write_manifest(export, project, swaps, pkgs, rules)
-    rows.append(("guid-remap", "files", str(remap_guids(os.path.join(project, "Assets"), remap))))
+    rows.append(("guid-remap", "files", str(remap_guids(dst_assets, remap))))
     with open(os.path.join(project, "UpgradeReport.tsv"), "w", encoding="utf-8") as fh:
         fh.write("kind\tsubject\tdetail\n")
         for r in rows:
@@ -251,7 +296,21 @@ def import_project(project, version, log, timeout=7200, min_free_gb=10):
 
 
 if __name__ == "__main__":
-    export, project, version = sys.argv[1:4]
-    for r in upgrade(export, project, version):
+    import argparse
+    ap = argparse.ArgumentParser(description="Upgrade an AssetRipper export into a project for a newer editor.")
+    ap.add_argument("export", help="AssetRipper ExportedProject folder")
+    ap.add_argument("project", help="target Unity project folder")
+    ap.add_argument("version", help="editor version installed under ~/Unity/Hub/Editor, e.g. 6000.3.18f1")
+    ap.add_argument("--root", action="append", default=[], help="regex over export paths; copy only what roots reach")
+    ap.add_argument("--refs", help="refs.tsv for --root (default: next to the export)")
+    ap.add_argument("--import", dest="do_import", action="store_true", help="then open once in batchmode")
+    a = ap.parse_args()
+    refs = a.refs or os.path.join(os.path.dirname(os.path.abspath(a.export)), "refs.tsv")
+    for r in upgrade(a.export, a.project, a.version, refs, a.root):
         if r[0] != "script-not-in-package":
             print("\t".join(r))
+    if a.do_import:
+        errs = import_project(os.path.abspath(a.project), a.version, os.path.join(os.path.abspath(a.project), "Logs", "udk-import.log"))
+        print(f"compile errors: {len(errs)}")
+        for e in errs[:40]:
+            print("  " + " ".join(e))

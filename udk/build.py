@@ -141,6 +141,10 @@ def fix_binary(L, d, meta):
     reg = elf.find_code_registration(b)
     invokers = elf.clamp_invoker_indices(b, reg[1], reg[0], reg[2]) if reg else 0
     names = elf.repair_module_names(b, reg[1], reg[0], m) if reg else []
+    if reg and neutral:
+        specs, rows, ranges = elf.repair_generic_tables(b, int(neutral[0], 16), reg[2], reg[1], reg[0], m)
+        log(f"generic tables repaired: {specs} method specs rewritten, {rows} generic method rows and "
+            f"{ranges} rgctx ranges dropped")
     with open(fixed, "wb") as fh:
         fh.write(b)
     log(f"module names repaired: {names}; invoker indices cleared: {invokers}")
@@ -203,12 +207,39 @@ def step_ghidra(L, out, game_re):
 
 
 def step_normalize(L, out, game_re):
-    """Mirror the game with engine-modified objects rewritten to the stock layout (udk/normalize.py)."""
+    """Mirror the game for AssetRipper: engine-modified objects rewritten to the stock layout
+    (udk/normalize.py), and the repaired IL2CPP pair placed where a standard build keeps it."""
     d = os.path.join(out, "normalized")
-    if os.path.exists(d + ".log"):
-        return
-    run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.normalize", L["game"], d, "6"],
-        6 * 3600, os.path.join(out, "logs", "normalize.log"), min_free_gb=8)
+    if not os.path.exists(d + ".log"):
+        run([os.path.join(KIT, ".venv", "bin", "python"), "-m", "udk.normalize", L["game"], d, "6"],
+            6 * 3600, os.path.join(out, "logs", "normalize.log"), min_free_gb=8)
+    for src, rel in il2cpp_places(L, out):
+        dst = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.lexists(dst):
+            os.remove(dst)
+        shutil.copy2(src, dst)
+        log(f"normalized: {rel} <- {os.path.relpath(src, out) if src.startswith(out) else src}")
+
+
+def il2cpp_places(L, out):
+    """(file, path in the mirror) for metadata and binary. A protected build gets the repaired copies
+    from out/inspector; a split Android package (xapk) keeps libil2cpp.so in a config apk, so it is
+    placed under the base apk's lib/<abi>/, where AssetRipper's IL2CPP detection looks."""
+    fixed_meta = os.path.join(out, "inspector", "global-metadata.dat")
+    fixed_bin = os.path.join(out, "inspector", os.path.basename(L["binary"]))
+    meta_rel = os.path.relpath(L["metadata"], L["game"])
+    places = [(fixed_meta if os.path.exists(fixed_meta) else L["metadata"], meta_rel)]
+    binary = fixed_bin if os.path.exists(fixed_bin) else L["binary"]
+    marker = os.path.join("assets", "bin", "Data")
+    if marker in meta_rel:
+        base = meta_rel.split(marker)[0]
+        abi = os.path.basename(os.path.dirname(L["binary"]))
+        places.append((binary, os.path.join(base, "lib", abi, os.path.basename(L["binary"]))))
+        places.append((binary, os.path.relpath(L["binary"], L["game"])))  # no protected copy left behind
+    else:
+        places.append((binary, os.path.relpath(L["binary"], L["game"])))
+    return places
 
 
 def step_assets(L, out, game_re):

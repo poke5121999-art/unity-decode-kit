@@ -213,6 +213,69 @@ def bad_method_specs(b, reg):
     return bad
 
 
+def repair_generic_tables(b, reg, code_reg, modules, n_modules, meta, method_size=32):
+    """Make the generic tables consistent for every reader (Il2CppDumper, Cpp2IL, Il2CppInspector).
+    Seen (Zing Speed): 16 KB runs of methodSpecs overwritten by another table, genericMethodTable rows
+    pointing nowhere, and rgctxRanges with repeated garbage tokens.
+    - A bad spec becomes (m, -1, -1) for a distinct non-generic method m: a plain reference, never a
+      fake instantiation, never a duplicate.
+    - genericMethodTable (v24.5 rows: spec, methodIndex, invokerIndex, adjustorThunk) keeps rows with a
+      valid first-seen spec and in-range indices; rgctxRanges keeps rows whose token is a type or
+      method token, first seen, and whose range lies inside rgctxs. Nothing indexes into those two
+      tables (they are looked up by key), so compacting them is safe.
+    Returns (specs rewritten, generic table rows dropped, rgctx ranges dropped)."""
+    insts = struct.unpack_from("<I", b, reg + 8)[0]
+    gmt_count, gmt_ptr = struct.unpack_from("<II", b, reg + 16)
+    count, ptr = struct.unpack_from("<II", b, reg + 32)
+    gmp_count = struct.unpack_from("<I", b, code_reg + 8)[0]
+    inv_count = struct.unpack_from("<I", b, code_reg + 20)[0]  # v24.5: genericAdjustorThunks sits at +16
+    m_off, m_size = struct.unpack_from("<II", meta, 8 + 8 * 5)
+    n_methods = m_size // method_size
+    generic = {i for i in range(n_methods) if struct.unpack_from("<i", meta, m_off + method_size * i + 16)[0] != -1}
+
+    def ok(t):
+        return 0 <= t[0] < n_methods and -1 <= t[1] < insts and -1 <= t[2] < insts and (t[1], t[2]) != (-1, -1)
+
+    specs = [struct.unpack_from("<iii", b, ptr + 12 * k) for k in range(count)]
+    seen, bad = set(), []
+    for k, t in enumerate(specs):
+        if not ok(t) or t in seen:
+            bad.append(k)
+        seen.add(t)
+    used = {t[0] for t in specs if ok(t) and t[1:] == (-1, -1)}
+    spare = (m for m in range(n_methods) if m not in generic and m not in used)
+    good = set(range(count)) - set(bad)
+    for k in bad:
+        struct.pack_into("<iii", b, ptr + 12 * k, next(spare), -1, -1)
+
+    rows, firsts = [], set()
+    for i in range(gmt_count):
+        g, mi, ii, adj = struct.unpack_from("<iiii", b, gmt_ptr + 16 * i)
+        if g in good and g not in firsts and 0 <= mi < gmp_count and -1 <= ii < inv_count:
+            rows.append((g, mi, ii, adj))
+            firsts.add(g)
+    for i, r in enumerate(rows):
+        struct.pack_into("<iiii", b, gmt_ptr + 16 * i, *r)
+    struct.pack_into("<I", b, reg + 16, len(rows))
+
+    dropped_ranges = 0
+    for a in struct.unpack_from(f"<{n_modules}I", b, modules):
+        n_ranges, ranges, n_rgctx = struct.unpack_from("<III", b, a + 32)
+        if not 0 < n_ranges < 1 << 20 or not 0 < ranges < len(b) - 12 * n_ranges:
+            continue
+        keep, tokens = [], set()
+        for i in range(n_ranges):
+            tok, start, length = struct.unpack_from("<Iii", b, ranges + 12 * i)
+            if tok >> 24 in (0x02, 0x06) and tok not in tokens and 0 <= start and 0 < length and start + length <= n_rgctx:
+                keep.append((tok, start, length))
+                tokens.add(tok)
+        for i, r in enumerate(keep):
+            struct.pack_into("<Iii", b, ranges + 12 * i, *r)
+        struct.pack_into("<I", b, a + 32, len(keep))
+        dropped_ranges += n_ranges - len(keep)
+    return len(bad), gmt_count - len(rows), dropped_ranges
+
+
 def restore_typedef_types(b, reg, meta, typedef_size=92):
     """Every type definition k names its own Il2CppType twice (byvalTypeIndex, byrefTypeIndex): a
     CLASS or VALUETYPE whose data is k. Rebuild those among the unreadable types (CORRUPT); a
