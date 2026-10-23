@@ -78,9 +78,38 @@ def cmd_method(a):
         while j < len(lines) and not (lines[j].startswith("// ") and "  @0x" in lines[j]):
             j += 1
         print(f"### code/decomp/{m['file']}:{m['line']}")
+        from udk import xref
+        shared = xref.shared_count(root, int(m["address"], 16))
+        if shared > 1:
+            print(f"// note: this code is shared by {shared} methods (identical bodies folded at link time), so Ghidra "
+                  "names it after one of them; the body is still this method's")
+            body = "\n".join(lines[i:j])
+            other = re.search(r"\((\w+) \*this,", body)
+            used = re.findall(r"\(this->fields\)\.(\w+)", body)
+            if other and used:
+                print("// " + "; ".join(same_offset(root, other.group(1), f, m["file"].rsplit("/", 1)[-1][:-2]) for f in dict.fromkeys(used)))
         print("\n".join(lines[i:j]).rstrip() + "\n")
     if len(hits) > a.n:
         print(f"... {len(hits) - a.n} more; raise -n")
+
+
+_FIELDS = {}
+
+
+def same_offset(root, other, field, mine):
+    """'other.field (0x18) is mine.X here': the field a folded body really touches in this type."""
+    from udk import retype
+    if not _FIELDS:
+        _FIELDS.update(retype.type_fields(os.path.join(root, "code", "types.cs")))
+
+    def find(short):
+        mine_short = short.split("+")[-1].split(".")[-1]
+        return next((v for q, v in _FIELDS.items() if q.rsplit(".", 1)[-1] == mine_short), {})
+    src = find(other)
+    off = next((o for o, f in src.items() if f == field), None)
+    if off is None:
+        return f"{other}.{field}: offset not found"
+    return f"{other}.{field} is at 0x{off:x}; in {mine} that offset holds {find(mine).get(off, '?')}"
 
 
 def cmd_callers(a):
@@ -144,6 +173,20 @@ def cmd_callers(a):
                     sig = label.split(": ", 1)[-1]
                     if sig not in seen:
                         by_method.setdefault(("binary", 0, sig), []).append(f"{how} at 0x{site:X} in {label}")
+    # Interface calls: IL2CPP looks the body up by slot, (slot, TypeInfo__IFoo, obj), with the slot
+    # being the method's place in Il2CppInspector's IFoo__VTable.
+    slot_rx = interface_slots(root, typ.split(".")[-1], [member, "get_" + member, "set_" + member])
+    if slot_rx:
+        r = subprocess.run([RG, "-n", "-P", slot_rx, os.path.join(root, "code", "decomp")], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            path, no, text = line.split(":", 2)
+            if path not in cache:
+                with open(path, encoding="utf-8") as fh:
+                    cache[path] = fh.read().split("\n")
+            lines = cache[path]
+            k = max((i for i, h in enumerate(lines[:int(no)]) if h.startswith("// ") and "  @0x" in h), default=0)
+            by_method.setdefault((os.path.relpath(path, root), k + 1, lines[k][3:].split("  @0x")[0]), []).append(
+                "interface call: " + text.strip())
     # UnityEvent listeners wired in the editor (Button.onClick...) call by name from prefabs/scenes.
     assets_dir = os.path.join(root, "assets", "ExportedProject", "Assets")
     if names and os.path.isdir(assets_dir):
@@ -153,7 +196,7 @@ def cmd_callers(a):
         for line in r.stdout.splitlines():
             p, no, text = line.split(":", 2)
             by_method.setdefault(("event", 0, os.path.relpath(p, assets_dir)), []).append(f"line {no}: {text.strip()}")
-    kind = "calls or backing-field uses" if names else "field uses"
+    kind = "calls or backing-field uses" if names else "calls or field uses" if slot_rx else "field uses"
     print(f"{len(by_method)} methods with {kind} of {a.spec}")
     for (path, line, caller), texts in list(by_method.items())[: a.n]:
         print({"binary": f"### (binary only, not in decomp)  {caller}",
@@ -169,11 +212,38 @@ def cmd_callers(a):
         explain_no_callers(root, t, short, names)
 
 
+def interface_slots(root, short, names):
+    """Regex for interface dispatch of names on interface short, or None when it is no interface."""
+    header = os.path.join(root, "inspector", "cpp", "appdata", "il2cpp-types.h")
+    if not os.path.exists(header):
+        return None
+    r = subprocess.run([RG, "-n", "-A", "400", "-P", rf"^struct (\w+__)?{re.escape(short)}__VTable \{{", header],
+                       capture_output=True, text=True)
+    slots, i = [], -1
+    for line in r.stdout.splitlines():
+        if "__VTable {" in line:
+            if slots:
+                break  # first matching interface only
+            i = 0
+            continue
+        if i < 0:
+            continue
+        m = re.search(r"VirtualInvokeData (\w+);", line)
+        if not m:
+            break
+        if m.group(1) in names:
+            slots.append(i)
+        i += 1
+    if not slots:
+        return None
+    return rf"\(\s*({'|'.join(map(str, slots))}),\s*TypeInfo__(\w+__)?{re.escape(short)}\b"
+
+
 def explain_no_callers(root, t, short, names):
     """Say what an empty result covers, so a reader can take it as "nothing uses this" or see what
     could still hide a use: a virtual call through a base or interface, or a body inlined into its callers."""
-    print("searched: decompiled calls (folded bodies too), machine-code calls/jumps/address loads, "
-          "MethodInfo references (delegates), UnityEvent listeners in prefabs and scenes")
+    print("searched: decompiled calls (folded bodies too), interface dispatch by slot, machine-code "
+          "calls/jumps/address loads, MethodInfo references (delegates), UnityEvent listeners in prefabs and scenes")
     with open(os.path.join(root, "code", "types.cs"), encoding="utf-8", errors="replace") as fh:
         decl = [l.strip() for l in fh if re.search(rf"\b({'|'.join(map(re.escape, names))})\(", l)]
     hidden = any(re.search(r"\b(virtual|override|abstract)\b", d) or re.match(r"\w+ \w+\.\w+\(", d.split(" ", 1)[-1])
