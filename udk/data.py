@@ -159,6 +159,9 @@ def string_table(b):
         end = h + 4 + 8 * n
         if not 8 <= n <= 1 << 20 or end > len(b):
             continue
+        head = struct.unpack_from(f"<{min(n, 64)}I", b, h + 4)
+        if any(head[i] >= head[i + 1] for i in range(len(head) - 1)):
+            continue  # cheap rejection before reading every key
         keys = struct.unpack_from(f"<{n}I", b, h + 4)
         offs = struct.unpack_from(f"<{n}I", b, h + 4 + 4 * n)
         if any(keys[i] >= keys[i + 1] for i in range(n - 1)) or offs[0] < end or \
