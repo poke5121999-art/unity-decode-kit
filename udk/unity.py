@@ -99,6 +99,46 @@ def runtime_assemblies(pkg):
     return out
 
 
+def asmdef_names(pkg):
+    """Every assembly name a package defines, tests and editor code included."""
+    out = set()
+    for rel, raw in pkg.files():
+        if rel.endswith(".asmdef"):
+            try:
+                out.add(json.loads(raw.decode("utf-8-sig"))["name"])
+            except (ValueError, KeyError):
+                pass
+    return out
+
+
+def fix_case_clashes(root):
+    """Unity ignores files whose paths differ only in letter case (QteView.cs / QTEView.cs,
+    Gcloud/ / GCloud/). Move every later one of such a group into a sibling folder <name>_caseN, so
+    each keeps its class name and its .meta guid. Returns the moved paths."""
+    moved = []
+    for d, dirs, fs in os.walk(root):
+        for names, is_dir in ((dirs, True), ([f for f in fs if not f.endswith(".meta")], False)):
+            seen = {}
+            for n in sorted(names):
+                seen.setdefault(n.lower(), []).append(n)
+            for group in seen.values():
+                for k, n in enumerate(group[1:], 2):
+                    if is_dir:
+                        new = f"{n}_case{k}"
+                        os.rename(os.path.join(d, n), os.path.join(d, new))
+                        dirs[dirs.index(n)] = new
+                        if os.path.exists(os.path.join(d, n + ".meta")):
+                            os.rename(os.path.join(d, n + ".meta"), os.path.join(d, new + ".meta"))
+                    else:
+                        sub = os.path.join(d, f"_case{k}")
+                        os.makedirs(sub, exist_ok=True)
+                        for x in (n, n + ".meta"):
+                            if os.path.exists(os.path.join(d, x)):
+                                os.rename(os.path.join(d, x), os.path.join(sub, x))
+                    moved.append(os.path.relpath(os.path.join(d, n), root))
+    return moved
+
+
 def exported_scripts(asm_dir):
     """{(namespace, class): guid} for an exported assembly folder."""
     out = {}
@@ -139,6 +179,17 @@ def plan(export, editor):
             else:
                 missing.append((asm, ".".join(filter(None, key))))
         swaps.append((asm, pkg.name, pkg.version, hit, len(old)))
+    # An exported assembly whose name a package also defines (its tests, its editor code) cannot
+    # coexist with that package: Unity refuses duplicate assembly names.
+    added = {name for _, name, *_ in swaps}
+    taken = {}
+    for name in added:
+        for a in asmdef_names(pkgs[name]):
+            taken.setdefault(a, name)
+    swapped = {asm for asm, *_ in swaps}
+    for asm in sorted(os.listdir(scripts_root)) if os.path.isdir(scripts_root) else []:
+        if asm in taken and asm not in swapped:
+            swaps.append((asm, taken[asm], pkgs[taken[asm]].version, 0, 0))
     return swaps, remap, missing, pkgs, rules
 
 
@@ -266,6 +317,7 @@ def upgrade(export, project, version, refs_tsv=None, root_patterns=()):
     rows += [("script-not-in-package", asm, cls) for asm, cls in missing]
     rows += write_manifest(export, project, swaps, pkgs, rules)
     rows.append(("guid-remap", "files", str(remap_guids(dst_assets, remap))))
+    rows += [("case-clash-moved", p, "path differed only in letter case") for p in fix_case_clashes(dst_assets)]
     with open(os.path.join(project, "UpgradeReport.tsv"), "w", encoding="utf-8") as fh:
         fh.write("kind\tsubject\tdetail\n")
         for r in rows:
@@ -274,13 +326,17 @@ def upgrade(export, project, version, refs_tsv=None, root_patterns=()):
 
 
 def compile_errors(log):
-    """Distinct compiler errors in an editor log, as (file, code, message)."""
+    """Distinct problems that stop compilation, as tuples: compiler errors (file, code, message) and
+    assembly-level ones Unity reports without an error code (duplicate assembly names...)."""
     seen = []
     with open(log, encoding="utf-8", errors="replace") as fh:
         for line in fh:
-            m = re.match(r"(.+?)\(\d+,\d+\): error (CS\d+): (.*)", line.strip())
-            if m and m.groups() not in seen:
-                seen.append(m.groups())
+            line = line.strip()
+            m = re.match(r"(.+?)\(\d+,\d+\): error (CS\d+): (.*)", line)
+            got = m.groups() if m else (("", "assembly", line) if re.match(r"Assembly with name '.+' already exists|"
+                                                                            r".*error: .*", line) else None)
+            if got and got not in seen:
+                seen.append(got)
     return seen
 
 
