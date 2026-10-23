@@ -30,6 +30,7 @@ KINDS = {
     "shaders": "shaders",
     "settings": "settings",
     "native": "native",
+    "havok": "havok/summary.tsv",  # collision meshes as .obj; the summary names each with its source asset
 }
 csv.field_size_limit(1 << 30)
 
