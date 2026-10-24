@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Cinemachine</AssemblyName>
+    <CmSrc Condition="'$(CmSrc)'==''">D:\walking-trade-ref\thirdparty-src\upm\cm-2.10.5\package\Runtime\</CmSrc>
+    <!-- asmdef versionDefines that resolve true in the game project (no postprocessing v2 / HDRP / InputSystem / 2D pixel perfect) -->
+    <ExtraDefines>CINEMACHINE_TIMELINE;CINEMACHINE_PHYSICS_2D;CINEMACHINE_PHYSICS;CINEMACHINE_UGUI;CINEMACHINE_URP;CINEMACHINE_URP_14;CINEMACHINE_UNITY_ANIMATION;CINEMACHINE_UNITY_IMGUI;$(CmExtra)</ExtraDefines>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup>
+    <Compile Include="$(CmSrc)**\*.cs" Exclude="$(CmSrc)**\Editor\**;$(CmExclude)" />
+    <Reference Include="$(Plugins)UnityEngine.UI.dll;$(Plugins)Unity.Timeline.dll;$(Plugins)Unity.RenderPipelines.Universal.Runtime.dll;$(Plugins)Unity.RenderPipelines.Core.Runtime.dll;$(Plugins)Unity.RenderPipelines.Universal.2D.Runtime.dll;$(Plugins)Unity.Mathematics.dll;$(Plugins)Unity.Collections.dll;$(Plugins)Unity.Burst.dll" Private="false" />
+  </ItemGroup>
+</Project>

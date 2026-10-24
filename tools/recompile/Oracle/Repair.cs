@@ -117,7 +117,13 @@ static class Repair
                 case IEventSymbol e: Walk(e.Type); break;
                 case IMethodSymbol mm: Walk(mm.ReturnType); foreach (var x in mm.Parameters) Walk(x.Type); break;
             }
-        if (decl == null) foreach (var t in origOwner.Interfaces.Append(origOwner.BaseType)) Walk(t);
+        if (decl == null)
+        {
+            foreach (var t in origOwner.Interfaces.Append(origOwner.BaseType)) Walk(t);
+            foreach (var arg in origOwner.GetAttributes().SelectMany(a => a.ConstructorArguments))
+                foreach (var v in arg.Kind == TypedConstantKind.Array ? arg.Values : System.Collections.Immutable.ImmutableArray.Create(arg))
+                    if (v.Value is ITypeSymbol ts) Walk(ts);
+        }
         var hit = pool.OfType<INamedTypeSymbol>().FirstOrDefault(t => t.Name == name.Identifier.Text);
         return hit?.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat
             .WithGenericsOptions(SymbolDisplayGenericsOptions.None)) is { } s && hit.IsGenericType && name is GenericNameSyntax g

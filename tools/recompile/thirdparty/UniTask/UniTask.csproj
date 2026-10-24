@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>UniTask</AssemblyName>
+    <RootNamespace>Cysharp.Threading.Tasks</RootNamespace>
+    <ExtraDefines>UNITY_2022_3;UNITASK_ASSETBUNDLE_SUPPORT;UNITASK_PHYSICS_SUPPORT;UNITASK_PHYSICS2D_SUPPORT;UNITASK_PARTICLESYSTEM_SUPPORT;UNITASK_UGUI_SUPPORT;UNITASK_WEBREQUEST_SUPPORT</ExtraDefines>
+    <UniTaskSrc Condition="'$(UniTaskSrc)'==''">D:\walking-trade-ref\thirdparty-src\UniTask\src\UniTask\Assets\Plugins\UniTask\Runtime\</UniTaskSrc>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup>
+    <Compile Include="$(UniTaskSrc)**\*.cs" Exclude="$(UniTaskSrc)External\**;$(UniTaskSrc)**\Editor\**" />
+    <Reference Include="$(Plugins)UnityEngine.UI.dll" Private="false" />
+  </ItemGroup>
+</Project>

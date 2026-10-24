@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>com.rlabrecque.steamworks.net</AssemblyName>
+    <SteamSrc Condition="'$(SteamSrc)'==''">D:\walking-trade-ref\thirdparty-src\sw-2025.162.0\com.rlabrecque.steamworks.net\Runtime\</SteamSrc>
+    <!-- asmdef includePlatforms is Windows64 standalone: 64-bit Windows Player -->
+    <ExtraDefines>UNITY_64;STEAMWORKS_WIN;STEAMWORKS_X64</ExtraDefines>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup>
+    <Compile Include="$(SteamSrc)**\*.cs" />
+  </ItemGroup>
+</Project>

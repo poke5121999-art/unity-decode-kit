@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Coffee.SoftMaskForUGUI</AssemblyName>
+    <SmSrc Condition="'$(SmSrc)'==''">D:\walking-trade-ref\thirdparty-src\SoftMaskForUGUI\Packages\src\Runtime\</SmSrc>
+    <!-- versionDefines from the asmdef, evaluated for Unity 6000.0 + TMP/ugui 2.0 + URP 17 -->
+    <ExtraDefines>UNITY_MODULE_VR;TMP_ENABLE;SHADERGRAPH_CANVAS_ENABLE;URP_ENABLE</ExtraDefines>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup>
+    <Compile Include="$(SmSrc)**\*.cs" Exclude="$(SmSrc)**\Editor\**" />
+    <Reference Include="$(Plugins)UnityEngine.UI.dll;$(Plugins)Unity.TextMeshPro.dll;$(Plugins)Unity.RenderPipelines.Universal.Runtime.dll;$(Plugins)Unity.RenderPipelines.Core.Runtime.dll;$(Plugins)Unity.Mathematics.dll;$(Plugins)Unity.Collections.dll" Private="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>DentedPixel</AssemblyName>
+    <LeanSrc Condition="'$(LeanSrc)'==''">D:\walking-trade-ref\thirdparty-src\LeanTween\Assets\LeanTween\Framework\</LeanSrc>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup>
+    <Compile Include="$(LeanSrc)*.cs" />
+    <Reference Include="$(Plugins)UnityEngine.UI.dll" Private="false" />
+  </ItemGroup>
+</Project>

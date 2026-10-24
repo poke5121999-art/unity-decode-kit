@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>KinoBloom.Runtime</AssemblyName>
+    <KinoSrc Condition="'$(KinoSrc)'==''">D:\walking-trade-ref\thirdparty-src\KinoBloom\Assets\Kino\Bloom\</KinoSrc>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup><Compile Include="$(KinoSrc)*.cs" /></ItemGroup>
+</Project>

@@ -179,7 +179,11 @@ def prep_skeletons(g):
         if not skel.exists():
             subprocess.run(["ilspycmd", "-p", "-o", str(skel), str(Path(g.cfg["plugins"]) / f"{asm}.dll")], check=True,
                            capture_output=True)
+        try:
             print(oracle("repair", skel, asm, "--orig", Path(g.cfg["plugins"]) / f"{asm}.dll").strip())
+        except RuntimeError as e:
+            # Repair stops when a pass makes no progress; index below reports what is left as base errors.
+            print(f"repair {asm}: stopped without progress\n{str(e)[-600:]}")
         print(oracle("index", skel, asm, "--out", g.p(f"keys.{asm}.tsv")).strip().split("\n")[0])
         print(oracle_tool("decls", "--src", skel, "--out", g.p(f"decls.{asm}.jsonl")).strip())
 
@@ -893,6 +897,9 @@ def assemble(g, asm, producers, out_dir):
     loose_nat = {loose(k): k for k in nat}
     best = {}
     for prod in producers:
+        if g.p(f"cand.{prod}.{asm}.jsonl").exists():
+            oracle("compile", g.p(f"skel/{asm}"), asm, "--candidates", g.p(f"cand.{prod}.{asm}.jsonl"),
+                   "--out", g.p(f"res.{prod}.{asm}.jsonl"))
         cands = {r["key"]: r for r in jsonl(g.p(f"cand.{prod}.{asm}.jsonl"))}
         for r in jsonl(g.p(f"res.{prod}.{asm}.jsonl")):
             if r["Status"] != "ok" or r["Unsafe"]:

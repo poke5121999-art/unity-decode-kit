@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>PriorityQueue</AssemblyName>
+    <PqSrc Condition="'$(PqSrc)'==''">D:\walking-trade-ref\thirdparty-src\High-Speed-Priority-Queue-for-C-Sharp\Priority Queue\</PqSrc>
+  </PropertyGroup>
+  <Import Project="..\common.props" />
+  <ItemGroup><Compile Include="$(PqSrc)*.cs" /></ItemGroup>
+</Project>
