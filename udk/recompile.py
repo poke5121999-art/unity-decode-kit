@@ -660,7 +660,7 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
         pending = nxt
     merged = {r["key"]: r for r in jsonl(g.p(f"cand.llm{tag}.{asm}.jsonl"))}
     for r in jsonl(log_path):
-        if r.get("final") and r.get("best_status", r["status"]) == "ok" and r.get("body"):
+        if r.get("final") and r.get("best_status", r["status"]) == "ok" and r.get("body") is not None:
             merged[r["key"]] = {"key": r["key"], "src": "llm" + tag, "body": r["body"]}
     write_jsonl(g.p(f"cand.llm{tag}.{asm}.jsonl"), merged.values())
     print(f"cand.llm{tag}.{asm}.jsonl: {len(merged)} compiling bodies so far", flush=True)
