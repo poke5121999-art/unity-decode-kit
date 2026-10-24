@@ -56,7 +56,9 @@ The Walking Trade v1.1.13 (Unity 6000.0.58f2, x64, metadata v31), năm assembly 
 | LLM (haiku), mẫu 120 method il2csharp không compile được | 114/120 compile, độ trung thực 87% |
 | LLM trên toàn bộ, 1.364 method đầu tiên | 97,4% compile, 92,6% trung thực (đo trước khi sửa lỗi đọc thiếu `.pdata`, xem mục bẫy) |
 | 12 method thuần, so với game gốc qua BepInEx | il2csharp 8/12 · LLM 10/12 · thêm tên CRT 239/246 call · sau `testfix` 246/246 call, 12/12 method |
-| Native coverage (thân compile được hoặc compiler tự sinh theo khai báo) | cập nhật khi chạy xong `llm_all.sh` |
+| Native coverage sau `llm_all.sh` cùng các lượt gập/relambda (5 assembly studio, 17.648 method native) | 15.720 method (89,1%). Gồm 12.950 thân compile được (12.380 trung thực theo đo đạc) và 2.770 thân compiler tự sinh theo khai báo. Còn 1.928 method chưa khôi phục, phần lớn là lambda trong class closure; 612 lambda trong số đó đã được viết inline trong method cha |
+| Thân compile được trên skeleton | 13.038/14.194 (91,9%); trung thực ≥0,8 trên 8.522/9.094 thân đo được (93,7%) |
+| Game dựng lại chạy thật (Linux player, Xvfb) | Lần 1: kẹt `StartupScene` vì stub UniTask treo mọi `await`. Lần 2 (UniTask thật): vẫn kẹt, vì thân async không khởi chạy state machine. Lần 3 (gập async): sang được `SplashScreenScene` rồi crash native ở FMOD/PulseAudio |
 
 Tái dùng trên game thứ hai, VOID DIVER demo (Unity 6000.3, metadata v39, dump dựng trên linux): `prep` cho
 3 assembly sạch lỗi gốc (`De.Scenes` và `De.Base` 0 lỗi, `De.InGame` 28 lỗi). Mẫu 60 method có 57 compile
