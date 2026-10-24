@@ -111,12 +111,37 @@ Chi phí đo được với haiku là khoảng 13k token vào cộng 3k token ra
   `this.OnValidate()`. Bản này compile được, khớp tên với native, và chỉ lộ khi Unity import asset mới chết vì
   `StackOverflowException`. Luật hiện tại: thân tự gọi mình mà native không gọi thì độ trung thực bằng 0, và
   `assemble` loại thân đó (37 thân, 34 trong số đó của il2csharp).
+- **Method của type generic không bao giờ khớp ground truth.** Khoá native mang một instantiation
+  (`SignalProperty`1::.ctor(Int32)`), skeleton mang type parameter (`.ctor(TValue)`). `generic_shape` ghép theo tên
+  và số tham số. Trước khi sửa, mọi method generic bị coi là không có mã máy và không được dịch.
+- **Thân đúng bị loại chỉ vì thiếu `using`.** 117 thân LLM rơi vì CS0246/CS0103 trên tên có đúng một type khớp
+  (`Action` thiếu `using System`). Oracle `Qualify()` ghi đầy đủ namespace rồi compile lại. Một trong số đó là
+  `SplashScreenApplicationState.OnSplashScreenCompleted`, thứ giữ game kẹt ở splash.
+- **API hết quota giữa chừng.** Mọi method còn lại bị ghi `final` với `llm_fail` và lần chạy sau bỏ qua. Giờ vòng
+  nào không prompt nào có trả lời thì dừng (exit ≠ 0), và `llm_fail` không tính là xong.
+- **Shader checkout có `#include "Packages/<tên>/..."`.** Chép vào Assets thì đường dẫn đó chết; `shaderremap` sửa
+  về đường dẫn mới và bỏ dấu `~` của thư mục (Unity bỏ qua `Samples~`).
 - **Method gốc có thể lặp vô hạn với input xấu** (`CountBits(-1)` dịch phải số học). Bản dựng lại treo y như gốc,
   nên harness cần timeout cho từng call, và plugin cần danh sách `skip`.
 
+## Từ DLL tới game chạy được
+
+Các bước sau áp lên project AssetRipper (`recompiled-project`) sau khi `assemble` xong:
+
+| Bước | Lệnh | Làm gì |
+|---|---|---|
+| Thư viện trả phí | `closure <seed game.json> <outdir>` rồi `llm` trên config riêng của thư viện | Chỉ dịch method mà code game với được: lời gọi trực tiếp và qua interface, callee bắc cầu, Unity message, `.cctor`, mọi `.ctor()` (Unity deserializer gọi), override cùng tên ở ≤8 type. Rewired_Core 4.333/14.731 thân |
+| Compile thư viện bị obfuscate | `Repair` tự gọi `Obfuscated.cs` | Explicit impl lệch tên, member trùng, type obsolete, attribute generic, indexer bị đổi tên. Rewired_Core 116→0 lỗi gốc |
+| Shader thật | `python -m udk.shaderremap <Assets> <moved> <nguồn>...` | Thay shader dummy bằng shader thật cùng tên, lấy từ package URP, `.unitypackage` đã giải nén (TMP essentials), hoặc checkout ngoài project. Trỏ lại mọi tham chiếu guid |
+| Shader không có nguồn | `python -m udk.shadersynth <Assets>` | Sinh thân URP theo role (`lit`, `unlit`, `sky`, `sdf`, `blit`, `blitter`, `none`) từ Properties của dummy |
+| Compute shader | `python -m udk.computeshader skel/check/install` | Dựng `.compute` từ binding + DXBC của `.asset`. `check` compile bản dịch bằng fxc rồi so disassembly với DXBC gốc. FogOfWarTextureRead 2/2 kernel giống từng lệnh |
+| Biết method nào còn thiếu khi chạy | `UDK_MARK_STUBS=1` lúc `assemble` | Mọi method chưa khôi phục ghi `[udk-stub] <key>` vào Player.log ở lần gọi đầu |
+| Chạy và chụp | `tools/recompile/unity/run-player.sh <build> <out> <giây> [game gốc]` | Đổi tên exe theo bản gốc, chép file Steam, chạy có hạn giờ; UdkProbe ghi ảnh, cây scene, exception; `UDK_PROBE_CALLS` gọi method theo lịch |
+
 ## Chưa làm được
 
-- **3D trong project dựng lại.** AssetRipper bản free xuất shader dummy (88/88 shader của The Walking Trade). Shader
-  URP phải trỏ về package URP thật. Shader của asset bên thứ ba (CFXR, Stylized Water 2, VLB) cần nguồn hoặc phải
-  giải mã DXBC.
-- **Thư viện trả phí chỉ có ở dạng IL2CPP** (Rewired, I2 Localization). Hai thư viện này chưa nằm trong phạm vi dịch.
+- **Shader không có nguồn vẫn là bản xấp xỉ.** 59/108 shader của The Walking Trade (Synty, Shader Graph của game,
+  Stylized Water 2, CFXR, Jupiter) đang dùng thân `shadersynth`. Hướng tiếp: DXBC của từng pass nằm trong
+  `compressedBlob` của Shader (LZ4). UnityPy giải nén được, nhưng Unity 6 cất subprogram ở
+  `progVertex.m_PlayerSubPrograms` mà `ShaderConverter` của UnityPy chưa đọc. Có DXBC rồi thì dịch như compute
+  shader: HLSL với cbuffer đúng tên (`UnityPerMaterial`, `UnityPerDraw`), kiểm bằng fxc + so disassembly.
