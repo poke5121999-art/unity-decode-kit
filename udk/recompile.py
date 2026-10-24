@@ -1024,6 +1024,10 @@ def closure(g, seed_cfg, out_dir):
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     for asm in g.cfg["assemblies"]:
         keys = [k for s in sorted(reached) for a, k in by_short[s] if a == asm]
+        # Unity's deserializer calls every component's and serialized class's parameterless constructor, where the
+        # field initializers live; nothing in the binary calls it. Without them a VolumeComponent's parameters stay null.
+        have = set(keys)
+        keys += [k for k, a in skel.items() if a == asm and k.endswith("::.ctor()") and k not in have]
         total = sum(1 for a in skel.values() if a == asm)
         Path(out_dir, f"closure.{asm}.txt").write_text("\n".join(keys) + "\n", encoding="utf-8", newline="\n")
         print(f"closure {asm}: {len(keys)} of {total} bodies reachable from {seed.cfg['name']}")
