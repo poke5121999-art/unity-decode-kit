@@ -223,12 +223,13 @@ sealed class Skeleton
             var trees = Rewrite(live.ToDictionary(k => k.Key, v => v.Value.Block));
             var comp = Compilation(trees);
             var failed = new Dictionary<string, List<string>>();
+            int stray = 0;
             foreach (var d in comp.GetDiagnostics())
             {
-                if (d.Severity != DiagnosticSeverity.Error || !d.Location.IsInSource) continue;
-                var node = d.Location.SourceTree.GetRoot().FindNode(d.Location.SourceSpan, getInnermostNodeForTie: true);
-                var owner = node.AncestorsAndSelf().FirstOrDefault(n => n.HasAnnotations(CandAnnotation));
-                if (owner == null) continue;
+                if (d.Severity != DiagnosticSeverity.Error) continue;
+                var node = d.Location.IsInSource ? d.Location.SourceTree.GetRoot().FindNode(d.Location.SourceSpan, getInnermostNodeForTie: true) : null;
+                var owner = node?.AncestorsAndSelf().FirstOrDefault(n => n.HasAnnotations(CandAnnotation));
+                if (owner == null) { stray++; continue; }
                 var key = owner.GetAnnotations(CandAnnotation).First().Data;
                 if (!failed.TryGetValue(key, out var l)) failed[key] = l = new List<string>();
                 if (l.Count < 4) l.Add($"{d.Id}: {d.GetMessage()}");
@@ -236,6 +237,8 @@ sealed class Skeleton
             Console.WriteLine($"round {round}: live={live.Count} failed={failed.Count}");
             if (failed.Count == 0)
             {
+                if (stray > BaseErrors)
+                    Console.WriteLine($"WARNING: {stray - BaseErrors} errors outside any candidate and the skeleton; 'ok' is not emit-clean");
                 foreach (var (k, calls) in CallSets(comp)) res[k].Calls = calls;
                 foreach (var k in live.Keys) { res[k].Status = "ok"; res[k].Round = round; }
                 live.Clear();
@@ -332,7 +335,16 @@ sealed class Skeleton
     static bool IsMember(SyntaxNode n) => n is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax
         or PropertyDeclarationSyntax or IndexerDeclarationSyntax;
 
-    static SyntaxNode Swap(SyntaxNode n, string kind, BlockSyntax b) => n switch
+    // The candidate annotation goes on the whole member, not just its block: some body errors (CS0161 "not all
+    // code paths return a value") are reported at the member's name.
+    static SyntaxNode Swap(SyntaxNode n, string kind, BlockSyntax b)
+    {
+        var swapped = SwapBody(n, kind, b);
+        var ann = b.GetAnnotations(CandAnnotation).FirstOrDefault();
+        return ann == null || n is ClassDeclarationSyntax ? swapped : swapped.WithAdditionalAnnotations(ann);
+    }
+
+    static SyntaxNode SwapBody(SyntaxNode n, string kind, BlockSyntax b) => n switch
     {
         ClassDeclarationSyntax cls => cls.AddMembers(NewCtor(cls, kind == "newcctor", b)),
         BaseMethodDeclarationSyntax m => m.WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),

@@ -823,6 +823,31 @@ def testfix(g, asm, prod, inputs, original, model="haiku", rounds=2):
     return per
 
 
+def assemble(g, asm, producers, out_dir):
+    """Pick each method's best compiling managed body across producers (highest fidelity, later producers win ties),
+    then emit <out_dir>/<asm>.dll: the skeleton with every recovered body in it."""
+    nat, callees = native_index(g)
+    loose_nat = {loose(k): k for k in nat}
+    best = {}
+    for prod in producers:
+        cands = {r["key"]: r for r in jsonl(g.p(f"cand.{prod}.{asm}.jsonl"))}
+        for r in jsonl(g.p(f"res.{prod}.{asm}.jsonl")):
+            if r["Status"] != "ok" or r["Unsafe"]:
+                continue
+            c = cands.get(r["Key"]) or next((v for k, v in cands.items() if loose(k) == loose(r["Key"])), None)
+            if c is None:
+                continue
+            f = fidelity(r["Key"], r.get("Calls") or [], nat, callees, loose_nat)
+            score = -1.0 if f is None else f
+            if r["Key"] not in best or score >= best[r["Key"]][0]:
+                best[r["Key"]] = (score, {"key": r["Key"], "src": prod, "body": c["body"]})
+    write_jsonl(g.p(f"cand.best.{asm}.jsonl"), [v for _, v in best.values()])
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out = oracle("compile", g.p(f"skel/{asm}"), asm, "--candidates", g.p(f"cand.best.{asm}.jsonl"),
+                 "--out", g.p(f"res.best.{asm}.jsonl"), "--emit", Path(out_dir) / f"{asm}.dll")
+    print(f"assemble {asm}: {Counter(v['src'] for _, v in best.values())}; " + out.strip().split("\n")[-1])
+
+
 def todo(g, asm, out_path):
     """Skeleton bodies that have native code but no faithful compiling body from any producer yet."""
     nat, callees = native_index(g)
@@ -850,6 +875,10 @@ def main(argv):
         baseline(g)
     elif cmd == "difftest":
         difftest(g, argv[3], argv[4], argv[5], argv[6])
+    elif cmd == "assemble":
+        for asm in g.assemblies:
+            if g.p(f"keys.{asm}.tsv").exists():
+                assemble(g, asm, argv[3].split(","), argv[4])
     elif cmd == "testfix":
         testfix(g, argv[3], argv[4], argv[5], argv[6])
     elif cmd == "todo":
