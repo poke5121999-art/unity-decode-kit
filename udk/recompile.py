@@ -309,11 +309,13 @@ class Context:
         self.loose = {}
         for k in list(self.ghidra) + list(self.il2csharp):
             self.loose.setdefault(loose(k), k)
+            if generic_shape(k):
+                self.loose.setdefault(generic_shape(k), k)
 
     def lookup(self, table, key):
         if key in table:
             return table[key]
-        alt = self.loose.get(loose(key))
+        alt = self.loose.get(loose(key)) or self.loose.get(generic_shape(key) or "")
         return table.get(alt) if alt else None
 
     def decl_of(self, typ):
@@ -446,6 +448,31 @@ def loose(key):
     return k[:i + 2] + name + ps
 
 
+def generic_shape(key):
+    """A method of a generic type or a generic method, by name and parameter count only. The native key carries one
+    instantiation's types (SignalProperty`1::.ctor(Int32)), the skeleton the type parameter (.ctor(TValue)); any
+    instantiation is the same source body."""
+    head = key.split("(", 1)[0]
+    if "`" not in head:
+        return None
+    params = key[len(head) + 1:key.rfind(")")]
+    return "#" + loose(head + "()")[:-2] + "/" + str(params.count(",") + 1 if params else 0)
+
+
+def loose_index(nat):
+    idx = {loose(k): k for k in nat}
+    for k in nat:
+        shape = generic_shape(k)
+        if shape:
+            idx.setdefault(shape, k)
+    return idx
+
+
+def nat_key(key, loose_nat):
+    """The native key of a skeleton key: exact, then loose spelling, then generic shape."""
+    return loose_nat.get(loose(key)) or loose_nat.get(generic_shape(key) or "")
+
+
 # ---------- llm ----------
 
 SYSTEM = """You translate IL2CPP native decompilation back into the original C# method bodies of a Unity game.
@@ -545,15 +572,16 @@ def rank(st):
 def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
     ctx = Context(g)
     nat, callees = native_index(g)
-    loose_nat = {loose(k): k for k in nat}
+    loose_nat = loose_index(nat)
     keys = [k.strip() for k in Path(keys_file).read_text(encoding="utf-8").split("\n") if k.strip()]
     calls_of = {}
     for k in keys:
-        r = nat.get(k) or nat.get(loose_nat.get(loose(k), ""))
+        r = nat.get(k) or nat.get(nat_key(k, loose_nat) or "")
         if r and r["calls"]:
             calls_of[k] = r["calls"]
     log_path = g.p(f"llm{tag}.{asm}.log.jsonl")
-    done = {r["key"] for r in jsonl(log_path) if r.get("final")}
+    # A key whose every attempt got no answer (the API was down or out of quota) is not done; it runs again.
+    done = {r["key"] for r in jsonl(log_path) if r.get("final") and r.get("best_status") != "llm_fail"}
     keys = [k for k in keys if k not in done]
     print(f"llm{tag} {asm}: {len(keys)} methods to translate with {model}", flush=True)
     best, retry, pending = {}, {}, list(keys)
@@ -581,6 +609,9 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
 
         with cf.ThreadPoolExecutor(workers) as ex:
             results = list(ex.map(job, jobs))
+        if all(meta.get("error") for _, _, meta in results):
+            # No prompt was answered: the API is down, not the methods hard. Stop before logging them as final.
+            sys.exit(f"round {rnd}: all {len(results)} prompts failed ({results[0][2].get('error')}); stopping")
         cands, logs, got = [], [], {}
         tin = tout = 0
         cost = 0.0
@@ -698,7 +729,7 @@ def fidelity(key, calls, nat, callees, loose_nat):
     A body that calls itself when the native code does not scores 0: that is a base call turned into recursion
     (il2csharp writes base.OnValidate() as this.OnValidate()), and it stack-overflows at runtime.
     """
-    r = nat.get(key) or nat.get(loose_nat.get(loose(key), ""))
+    r = nat.get(key) or nat.get(nat_key(key, loose_nat) or "")
     if self_recursion(key, calls, r):
         return 0.0
     if r is None or not r["calls"]:
@@ -728,7 +759,7 @@ def skeleton_keys(g, asm, loose_nat):
         if not l:
             continue
         key, kind = l.split("\t")[:2]
-        if kind.startswith("new") and loose(key) not in loose_nat:
+        if kind.startswith("new") and nat_key(key, loose_nat) is None:
             continue
         out.append(key)
     return out
@@ -765,7 +796,7 @@ def native_coverage(g, asm, skel_set, best, gh_keys):
 
 def score(g, producers):
     nat, callees = native_index(g)
-    loose_nat = {loose(k): k for k in nat}
+    loose_nat = loose_index(nat)
     native_rows, gh_by_asm = [], defaultdict(list)
     for r in jsonl(g.p("ghidra.jsonl")):
         gh_by_asm[r["asm"]].append(r["key"])
@@ -888,7 +919,7 @@ def testfix(g, asm, prod, inputs, original, model="haiku", rounds=2):
     calls, keep a new body only when it matches more calls. Writes cand.<prod>fix.<asm>.jsonl."""
     ctx = Context(g)
     nat, _ = native_index(g)
-    loose_nat = {loose(k): k for k in nat}
+    loose_nat = loose_index(nat)
     fixed = f"{prod}fix"
     cands = {r["key"]: r for r in jsonl(g.p(f"cand.{prod}.{asm}.jsonl"))}
     write_jsonl(g.p(f"cand.{fixed}.{asm}.jsonl"), [dict(r, src=fixed) for r in cands.values()])
@@ -899,7 +930,7 @@ def testfix(g, asm, prod, inputs, original, model="haiku", rounds=2):
             break
         jobs = []
         for k in failing:
-            calls_of = {k: (nat.get(k) or nat.get(loose_nat.get(loose(k), ""), {})).get("calls", [])}
+            calls_of = {k: (nat.get(k) or nat.get(nat_key(k, loose_nat) or "", {})).get("calls", [])}
             ex = "\n".join(f"  {k.split('::')[1].split('(')[0]}({', '.join(a)}) -> expected {e}, yours {o}"
                            for a, e, o in per[k]["bad"][:12])
             jobs.append((k, ctx.pack([k], calls_of) + "\n\nYOUR CURRENT BODY FOR " + k + ":\n```csharp\n" + cands[k]["body"] +
@@ -930,7 +961,7 @@ def assemble(g, asm, producers, out_dir):
     """Pick each method's best compiling managed body across producers (highest fidelity, later producers win ties),
     then emit <out_dir>/<asm>.dll: the skeleton with every recovered body in it."""
     nat, callees = native_index(g)
-    loose_nat = {loose(k): k for k in nat}
+    loose_nat = loose_index(nat)
     best = {}
     for prod in producers:
         if g.p(f"cand.{prod}.{asm}.jsonl").exists():
@@ -944,7 +975,7 @@ def assemble(g, asm, producers, out_dir):
             if c is None:
                 continue
             f = fidelity(r["Key"], r.get("Calls") or [], nat, callees, loose_nat)
-            if f == 0.0 and self_recursion(r["Key"], r.get("Calls") or [], nat.get(r["Key"]) or nat.get(loose_nat.get(loose(r["Key"]), ""))):
+            if f == 0.0 and self_recursion(r["Key"], r.get("Calls") or [], nat.get(r["Key"]) or nat.get(nat_key(r["Key"], loose_nat) or "")):
                 continue
             score = -1.0 if f is None else f
             if r["Key"] not in best or score >= best[r["Key"]][0]:
@@ -971,7 +1002,7 @@ def closure(g, seed_cfg, out_dir):
     by_short, by_name = defaultdict(list), defaultdict(set)
     skel = {}
     for asm in g.cfg["assemblies"]:
-        for k in skeleton_keys(g, asm, {loose(x): x for x in nat}):
+        for k in skeleton_keys(g, asm, loose_index(nat)):
             typ, rest = k.split("::", 1)
             short = simple_name(typ) + "::" + rest.split("(")[0]
             by_short[short].append((asm, k))
@@ -1001,7 +1032,7 @@ def closure(g, seed_cfg, out_dir):
 def todo(g, asm, out_path):
     """Skeleton bodies that have native code but no faithful compiling body from any producer yet."""
     nat, callees = native_index(g)
-    loose_nat = {loose(k): k for k in nat}
+    loose_nat = loose_index(nat)
     skel = skeleton_keys(g, asm, loose_nat)
     good = set()
     for prod in ("il2csharp", "llm"):
@@ -1011,7 +1042,7 @@ def todo(g, asm, out_path):
                 if f is None or f >= FAITHFUL:
                     good.add(r["Key"])
     tried = {r["key"] for r in jsonl(g.p(f"llm.{asm}.log.jsonl")) if r.get("final")}
-    keys = [k for k in skel if k not in good and k not in tried and loose(k) in loose_nat]
+    keys = [k for k in skel if k not in good and k not in tried and nat_key(k, loose_nat) is not None]
     Path(out_path).write_text("\n".join(keys) + "\n", encoding="utf-8", newline="\n")
     print(f"todo {asm}: {len(keys)} of {len(skel)} bodies need translation")
 
