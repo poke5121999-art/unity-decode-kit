@@ -362,6 +362,8 @@ class Context:
                 il = il.strip()
                 sec.append("il2csharp DRAFT (often wrong, pointer arithmetic):\n" + (il[:draft_cap] + "\n..." if len(il) > draft_cap else il))
             sections.append("\n".join(sec))
+            # MoveNext and lambda bodies name types the method itself never mentions; their declarations matter too.
+            tokens |= set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", sections[-1]))
         names = {piece for t in tokens for piece in re.split(r"__+", t) if piece in self.decl_by_name}
         own = self._simple(typ)
         scope = names | {own} | ({self._simple(outer)} if outer else set())
