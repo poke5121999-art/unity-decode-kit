@@ -315,6 +315,8 @@ sealed class Skeleton
                 return SyntaxFactory.ParseName(text).WithTriviaFrom(o);
             });
             if (block is not BlockSyntax b) continue;
+            // Emit re-parses Body, so the qualified names must land in the text too.
+            live[key].C.Body = string.Concat(b.Statements.Select(s => s.ToFullString()));
             live[key] = (live[key].C, b);
             failed.Remove(key);
             kept++;
@@ -378,7 +380,7 @@ sealed class Skeleton
         return outp;
     }
 
-    List<SyntaxTree> Rewrite(Dictionary<string, BlockSyntax> bodies)
+    List<SyntaxTree> Rewrite(Dictionary<string, BlockSyntax> bodies, bool markStubs = false)
     {
         var byTree = new Dictionary<int, Dictionary<TextSpan, List<(string Kind, BlockSyntax Block)>>>();
         foreach (var (k, b) in bodies)
@@ -388,16 +390,51 @@ sealed class Skeleton
             if (!d.TryGetValue(m.Span, out var l)) d[m.Span] = l = new();
             l.Add((m.Kind, b));
         }
+        // A body nobody recovered is still the stub's empty body, and a game that reaches it silently does nothing.
+        // Marked, each one logs "[udk-stub] <key>" the first time it runs, so a play session names the logic it hit.
+        var stubs = new Dictionary<int, Dictionary<TextSpan, string>>();
+        if (markStubs)
+            foreach (var (k, m) in _members)
+                if (!bodies.ContainsKey(k) && !_ambiguous.Contains(k) && m.Kind is "method" or "accessor")
+                {
+                    if (!stubs.TryGetValue(m.Tree, out var d)) stubs[m.Tree] = d = new();
+                    d[m.Span] = k;
+                    byTree.TryAdd(m.Tree, new());
+                }
         var outTrees = new List<SyntaxTree>(_trees);
         foreach (var (ti, spans) in byTree)
         {
             var root = _trees[ti].GetRoot();
-            var targets = root.DescendantNodes().Where(n => spans.ContainsKey(n.Span) && (IsMember(n) || n is ClassDeclarationSyntax)).ToList();
+            var stubSpans = stubs.GetValueOrDefault(ti) ?? new();
+            var targets = root.DescendantNodes().Where(n => (spans.ContainsKey(n.Span) && (IsMember(n) || n is ClassDeclarationSyntax))
+                || (stubSpans.ContainsKey(n.Span) && IsMember(n))).ToList();
             var newRoot = root.ReplaceNodes(targets, (orig, rewritten) =>
-                spans[orig.Span].Aggregate(rewritten, (n, e) => Swap(n, e.Kind, e.Block)));
+            {
+                if (stubSpans.TryGetValue(orig.Span, out var key) && !spans.ContainsKey(orig.Span))
+                    return MarkStub(rewritten, key);
+                return spans[orig.Span].Aggregate(rewritten, (n, e) => Swap(n, e.Kind, e.Block));
+            });
             outTrees[ti] = _trees[ti].WithRootAndOptions(newRoot, _trees[ti].Options);
         }
+        if (markStubs)
+        {
+            var log = Compilation(_trees).GetTypeByMetadataName("UnityEngine.Debug") != null
+                ? "global::UnityEngine.Debug.LogWarning(\"[udk-stub] \" + k);" : "global::System.Console.Error.WriteLine(\"[udk-stub] \" + k);";
+            outTrees.Add(CSharpSyntaxTree.ParseText("internal static class UdkStubLog { static readonly global::System.Collections.Generic.HashSet<string> Seen = new(); " +
+                "public static void Hit(string k) { lock (Seen) { if (!Seen.Add(k)) return; } " + log + " } }", new CSharpParseOptions(LanguageVersion.Latest)));
+        }
         return outTrees;
+    }
+
+    static SyntaxNode MarkStub(SyntaxNode n, string key)
+    {
+        var hit = SyntaxFactory.ParseStatement("global::UdkStubLog.Hit(" + SyntaxFactory.Literal(key).ToFullString() + ");");
+        return n switch
+        {
+            BaseMethodDeclarationSyntax m when m.Body != null => m.WithBody(m.Body.WithStatements(m.Body.Statements.Insert(0, hit))),
+            AccessorDeclarationSyntax a when a.Body != null => a.WithBody(a.Body.WithStatements(a.Body.Statements.Insert(0, hit))),
+            _ => n,
+        };
     }
 
     static bool IsMember(SyntaxNode n) => n is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax
@@ -460,7 +497,7 @@ sealed class Skeleton
     public bool Emit(List<Candidate> ok, string path)
     {
         var bodies = ok.ToDictionary(c => c.Key, c => (BlockSyntax)SyntaxFactory.ParseStatement("{\n" + c.Body + "\n}"));
-        var comp = Compilation(Rewrite(bodies));
+        var comp = Compilation(Rewrite(bodies, Environment.GetEnvironmentVariable("UDK_MARK_STUBS") == "1"));
         using var fs = File.Create(path);
         var r = comp.Emit(fs);
         foreach (var d in r.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(20)) Console.Error.WriteLine(d);
