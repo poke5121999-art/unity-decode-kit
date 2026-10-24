@@ -15,6 +15,20 @@ public static class UdkBuild
         if (string.IsNullOrEmpty(outPath)) { Debug.LogError("[UdkBuild] UDK_BUILD_OUT is not set"); EditorApplication.Exit(2); return; }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath)));
 
+        // A recovered plugin named Assembly-CSharp.dll is shadowed in the player by the Assembly-CSharp Unity compiles
+        // from any loose script under Assets, and every scene reference into it becomes a missing script.
+        bool pluginAsm = AssetDatabase.FindAssets("Assembly-CSharp").Select(AssetDatabase.GUIDToAssetPath)
+            .Any(p => Path.GetFileName(p) == "Assembly-CSharp.dll");
+        var compiled = UnityEditor.Compilation.CompilationPipeline.GetAssemblies(UnityEditor.Compilation.AssembliesType.Player)
+            .FirstOrDefault(a => a.name == "Assembly-CSharp");
+        if (pluginAsm && compiled != null)
+        {
+            Debug.LogError("[UdkBuild] loose scripts compile into Assembly-CSharp and shadow the recovered Assembly-CSharp.dll: " +
+                           string.Join(", ", compiled.sourceFiles) + " (move them under an .asmdef)");
+            EditorApplication.Exit(3);
+            return;
+        }
+
         var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToList();
         if (scenes.Count == 0)
         {
