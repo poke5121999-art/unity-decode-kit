@@ -954,6 +954,48 @@ def assemble(g, asm, producers, out_dir):
     print(f"assemble {asm}: {Counter(v['src'] for _, v in best.values())}; " + out.strip().split("\n")[-1])
 
 
+UNITY_MESSAGES = {"Awake", "Start", "Update", "LateUpdate", "FixedUpdate", "OnEnable", "OnDisable", "OnDestroy", "OnGUI",
+                  "OnApplicationFocus", "OnApplicationPause", "OnApplicationQuit", "OnValidate", "Reset", ".cctor"}
+
+
+def closure(g, seed_cfg, out_dir):
+    """Methods of this config's assemblies that the seed game's own code can reach: its direct and interface calls,
+    then the libraries' callees transitively, plus what Unity or a vtable calls without a direct call site (messages,
+    static constructors, overrides and implementations of a reached method). A paid library used through a small
+    surface needs only these bodies to run."""
+    seed = Game(seed_cfg)
+    seed_nat, _ = native_index(seed)
+    nat, callees = native_index(g)
+    by_short, by_name = defaultdict(list), defaultdict(set)
+    skel = {}
+    for asm in g.cfg["assemblies"]:
+        for k in skeleton_keys(g, asm, {loose(x): x for x in nat}):
+            typ, rest = k.split("::", 1)
+            short = simple_name(typ) + "::" + rest.split("(")[0]
+            by_short[short].append((asm, k))
+            by_name[rest.split("(")[0]].add(short)
+            skel[k] = asm
+    reached = set()
+    frontier = [x for r in seed_nat.values() for alts in r["calls"] for x in alts if x in by_short]
+    frontier += [s for s in by_short if s.split("::")[1] in UNITY_MESSAGES]
+    while frontier:
+        s = frontier.pop()
+        if s in reached:
+            continue
+        reached.add(s)
+        frontier += [c for c in callees.get(s, []) if c in by_short and c not in reached]
+        name = s.split("::")[1]
+        # Same member name in few types: an override or interface implementation reached through dispatch.
+        if name not in COMMON and len(by_name[name]) <= 8:
+            frontier += [o for o in by_name[name] if o not in reached]
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    for asm in g.cfg["assemblies"]:
+        keys = [k for s in sorted(reached) for a, k in by_short[s] if a == asm]
+        total = sum(1 for a in skel.values() if a == asm)
+        Path(out_dir, f"closure.{asm}.txt").write_text("\n".join(keys) + "\n", encoding="utf-8", newline="\n")
+        print(f"closure {asm}: {len(keys)} of {total} bodies reachable from {seed.cfg['name']}")
+
+
 def todo(g, asm, out_path):
     """Skeleton bodies that have native code but no faithful compiling body from any producer yet."""
     nat, callees = native_index(g)
@@ -977,6 +1019,8 @@ def main(argv):
     cmd = argv[2]
     if cmd == "prep":
         prep(g)
+    elif cmd == "closure":
+        closure(g, argv[3], argv[4])
     elif cmd == "baseline":
         baseline(g)
     elif cmd == "difftest":

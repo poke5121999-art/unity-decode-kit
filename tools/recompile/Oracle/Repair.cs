@@ -19,6 +19,13 @@ static class Repair
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary).WithMetadataImportOptions(MetadataImportOptions.All));
         var opts = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true);
         FieldLikeEvents(srcDir);
+        var rc = TypeNames(srcDir, asm, refs, orig, opts);
+        Obfuscated.Run(srcDir, asm, refs, opts);
+        return rc;
+    }
+
+    static int TypeNames(string srcDir, string asm, List<MetadataReference> refs, CSharpCompilation orig, CSharpCompilationOptions opts)
+    {
         int lastCount = int.MaxValue;
         for (int pass = 1; pass <= 5; pass++)
         {
@@ -140,7 +147,7 @@ static class Repair
         if (ctor?.Initializer != null) return (null, null);
         if (ctor == null && t.InstanceConstructors.Any(c => !c.IsImplicitlyDeclared)) return (null, null);
         var best = t.BaseType.InstanceConstructors.Where(c => c.DeclaredAccessibility != Accessibility.Private)
-            .OrderBy(c => c.Parameters.Length).FirstOrDefault();
+            .OrderBy(Obfuscated.ObsoleteError).ThenBy(c => c.Parameters.Length).FirstOrDefault();
         if (best == null) return (null, null);
         var args = string.Join(", ", best.Parameters.Select(p => $"default({p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})"));
         var init = SyntaxFactory.ConstructorInitializer(SyntaxKind.BaseConstructorInitializer,
