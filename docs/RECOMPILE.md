@@ -105,6 +105,10 @@ Chi phí đo được với haiku là khoảng 13k token vào cộng 3k token ra
   DLL cho ra tên. Bước này thêm 1.670 lời gọi vào ground truth.
 - **Ghidra làm rơi tham số xmm của hàm CRT.** `log10f(max(1, value))` hiện ra thành `FUN_x()`. Prompt phải kèm
   disassembly.
+- **il2csharp biến lời gọi base thành đệ quy.** Mã máy gọi `ItemData.OnValidate` không qua virtual, il2csharp viết
+  `this.OnValidate()`. Bản này compile được, khớp tên với native, và chỉ lộ khi Unity import asset mới chết vì
+  `StackOverflowException`. Luật hiện tại: thân tự gọi mình mà native không gọi thì độ trung thực bằng 0, và
+  `assemble` loại thân đó (37 thân, 34 trong số đó của il2csharp).
 - **Method gốc có thể lặp vô hạn với input xấu** (`CountBits(-1)` dịch phải số học). Bản dựng lại treo y như gốc,
   nên harness cần timeout cho từng call, và plugin cần danh sách `skip`.
 

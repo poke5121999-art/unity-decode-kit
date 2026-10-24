@@ -27,12 +27,13 @@ public static class UdkBuild
         }
         Debug.Log("[UdkBuild] scenes: " + string.Join(", ", scenes));
 
+        bool linux = string.Equals(Environment.GetEnvironmentVariable("UDK_BUILD_TARGET"), "Linux64", StringComparison.OrdinalIgnoreCase);
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x);
         var opts = new BuildPlayerOptions
         {
             scenes = scenes.ToArray(),
             locationPathName = outPath,
-            target = BuildTarget.StandaloneWindows64,
+            target = linux ? BuildTarget.StandaloneLinux64 : BuildTarget.StandaloneWindows64,
             targetGroup = BuildTargetGroup.Standalone,
             options = BuildOptions.Development
         };

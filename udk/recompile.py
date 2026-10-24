@@ -130,7 +130,35 @@ def ghidra_key(typ, c_name, sig):
 
 # ---------- prep ----------
 
+def free_memory_gb():
+    """Free commit on Windows, MemAvailable on Linux; None when it cannot be read."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                  "(Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory"],
+                                 capture_output=True, text=True, timeout=60).stdout
+            return int(out.strip()) / 1024 / 1024
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / 1024 / 1024
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return None
+
+
+def wait_for_memory():
+    """Machines are shared: hold off heavy steps until UDK_MIN_FREE_GB (default 6) is free, instead of being reaped."""
+    need = float(os.environ.get("UDK_MIN_FREE_GB", "6"))
+    waited = 0
+    while (free := free_memory_gb()) is not None and free < need:
+        if waited % 600 == 0:
+            print(f"waiting for memory: {free:.1f} GB free, need {need:.0f}", flush=True)
+        time.sleep(60)
+        waited += 60
+
+
 def oracle(*args):
+    wait_for_memory()
     out = subprocess.run(["sh", str(ORACLE), *map(str, args)], capture_output=True, text=True, encoding="utf-8")
     if out.returncode != 0:
         raise RuntimeError(out.stdout[-1500:] + out.stderr[-1500:])
@@ -517,6 +545,7 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
     for rnd in range(1, rounds + 1):
         if not pending:
             break
+        wait_for_memory()
         if rnd == 1:
             jobs = [(b, ctx.pack(b, calls_of)) for b in batches(pending, ctx)]
         else:
@@ -562,6 +591,10 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
             missing = []
             if b["status"] == "ok" and b.get("fidelity") is not None and b["fidelity"] < FAITHFUL:
                 missing = [alts for alts in calls_of.get(k, []) if not any(x in set(b["calls"]) for x in alts)]
+                if own_name(k) in b["calls"]:
+                    missing.append([f"(your body calls {own_name(k)} itself, the native code does not: "
+                                    "that call is the base implementation, write base.{name}(...))".replace(
+                                        "{name}", own_name(k).split("::")[1])])
             fixable = b["status"] in ("compile_error", "syntax_error", "llm_fail") or bool(missing)
             again = rnd < rounds and fixable
             if b["status"] == "llm_fail":
@@ -607,16 +640,30 @@ COMMON = {".ctor", ".cctor", "Invoke", "get_Item", "set_Item", "MoveNext", "Disp
           "get_IsCompleted", "GetAwaiter", "Create", "get_Instance", "TryGetValue", "set_Value", "get_Value"}
 
 
+def own_name(key):
+    typ, rest = key.split("::", 1)
+    return simple_name(typ) + "::" + rest.split("(")[0]
+
+
+def self_recursion(key, calls, native_row):
+    me = own_name(key)
+    return me in calls and not (native_row and any(me in alts for alts in native_row["calls"]))
+
+
 def fidelity(key, calls, nat, callees, loose_nat):
     """Share of the native method's resolved direct calls that the C# body also makes (None: nothing to compare).
 
     A C# call counts for the native callees it was inlined into (one level), and an async builder's Start counts
     for the state machine's MoveNext it always runs. Name-only matches skip names too common to identify a callee.
+    A body that calls itself when the native code does not scores 0: that is a base call turned into recursion
+    (il2csharp writes base.OnValidate() as this.OnValidate()), and it stack-overflows at runtime.
     """
     r = nat.get(key) or nat.get(loose_nat.get(loose(key), ""))
+    if self_recursion(key, calls, r):
+        return 0.0
     if r is None or not r["calls"]:
         return None
-    have = set(calls)
+    have = set(calls) - {own_name(key)}
     for c in calls:
         have.update(callees.get(c, ()))
     names = {c.split("::")[-1] for c in have} - COMMON
@@ -854,6 +901,8 @@ def assemble(g, asm, producers, out_dir):
             if c is None:
                 continue
             f = fidelity(r["Key"], r.get("Calls") or [], nat, callees, loose_nat)
+            if f == 0.0 and self_recursion(r["Key"], r.get("Calls") or [], nat.get(r["Key"]) or nat.get(loose_nat.get(loose(r["Key"]), ""))):
+                continue
             score = -1.0 if f is None else f
             if r["Key"] not in best or score >= best[r["Key"]][0]:
                 best[r["Key"]] = (score, {"key": r["Key"], "src": prod, "body": c["body"]})
