@@ -9,6 +9,7 @@ using UnityEngine.SceneManagement;
 public static class UdkProbe
 {
     static string dir;
+    static GameObject probe;
     static readonly Dictionary<LogType, int> counts = new Dictionary<LogType, int>();
     static readonly Dictionary<string, int> exc = new Dictionary<string, int>();
     static readonly List<string> scenes = new List<string>();
@@ -36,7 +37,7 @@ public static class UdkProbe
             int dot = parts[1].LastIndexOf('.');
             calls.Add((float.Parse(parts[0]), parts[1].Substring(0, dot), parts[1].Substring(dot + 1)));
         }
-        var go = new GameObject("UdkProbe");
+        var go = probe = new GameObject("UdkProbe");
         UnityEngine.Object.DontDestroyOnLoad(go);
         go.hideFlags = HideFlags.HideAndDontSave;
         go.AddComponent<Ticker>();
@@ -97,6 +98,12 @@ public static class UdkProbe
             var sc = SceneManager.GetSceneAt(i);
             sb.Append("scene ").Append(sc.name).Append('\n');
             foreach (var root in sc.GetRootGameObjects()) Dump(root.transform, 1, sb);
+        }
+        // The DontDestroyOnLoad scene is not in SceneManager's list; the probe's own object lives there.
+        if (probe != null)
+        {
+            sb.Append("scene ").Append(probe.scene.name).Append('\n');
+            foreach (var root in probe.scene.GetRootGameObjects()) if (root != probe) Dump(root.transform, 1, sb);
         }
         try { File.WriteAllText(path, sb.ToString()); } catch { }
     }

@@ -487,8 +487,9 @@ sealed class Skeleton
     // ILSpy drops constructors that only run field initializers; recovering them means adding the member back.
     static ConstructorDeclarationSyntax NewCtor(ClassDeclarationSyntax cls, bool isStatic, BlockSyntax b)
     {
-        var mods = isStatic ? SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.StaticKeyword))
-            : SyntaxFactory.TokenList(SyntaxFactory.Token(cls.Modifiers.Any(SyntaxKind.AbstractKeyword) ? SyntaxKind.ProtectedKeyword : SyntaxKind.PublicKeyword));
+        var mod = SyntaxFactory.Token(isStatic ? SyntaxKind.StaticKeyword
+            : cls.Modifiers.Any(SyntaxKind.AbstractKeyword) ? SyntaxKind.ProtectedKeyword : SyntaxKind.PublicKeyword);
+        var mods = SyntaxFactory.TokenList(mod.WithTrailingTrivia(SyntaxFactory.Space));
         var ctor = SyntaxFactory.ConstructorDeclaration(cls.Identifier.WithoutTrivia()).WithModifiers(mods).WithBody(b);
         var ann = b.GetAnnotations(CandAnnotation).FirstOrDefault();
         return ann == null ? ctor : ctor.WithAdditionalAnnotations(ann);
@@ -497,9 +498,17 @@ sealed class Skeleton
     public bool Emit(List<Candidate> ok, string path)
     {
         var bodies = ok.ToDictionary(c => c.Key, c => (BlockSyntax)SyntaxFactory.ParseStatement("{\n" + c.Body + "\n}"));
-        var comp = Compilation(Rewrite(bodies, Environment.GetEnvironmentVariable("UDK_MARK_STUBS") == "1"));
+        // Reparsed from text with an encoding, which debug information needs; annotations are not needed past here.
+        var trees = Rewrite(bodies, Environment.GetEnvironmentVariable("UDK_MARK_STUBS") == "1")
+            .Select(t => CSharpSyntaxTree.ParseText(SourceText.From(t.GetText().ToString(), System.Text.Encoding.UTF8),
+                (CSharpParseOptions)t.Options, t.FilePath)).ToList();
+        var comp = Compilation(trees);
         using var fs = File.Create(path);
-        var r = comp.Emit(fs);
+        // A portable PDB with the rebuilt source embedded: a player exception then names the line of recovered code.
+        using var pdb = File.Create(Path.ChangeExtension(path, ".pdb"));
+        var texts = trees.Where(t => t.FilePath != "").Select(t => EmbeddedText.FromSource(t.FilePath, t.GetText()));
+        var r = comp.Emit(fs, pdb, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+            debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb), embeddedTexts: texts);
         foreach (var d in r.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(20)) Console.Error.WriteLine(d);
         Console.WriteLine($"emit {path}: {(r.Success ? "ok" : "FAILED")} with {ok.Count} recovered bodies");
         return r.Success;
