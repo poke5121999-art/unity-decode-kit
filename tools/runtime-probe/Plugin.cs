@@ -41,6 +41,7 @@ namespace MethodProbe
             MaxSamples = Config.Bind("Probe", "MaxSamples", 5, "Samples kept per method.").Value;
             OutPath = outCfg.Value;
 
+            SetupInvoke();
             if (!File.Exists(listCfg.Value)) { Log.LogWarning("method list not found: " + listCfg.Value); return; }
             var asms = AppDomain.CurrentDomain.GetAssemblies();
             var harmony = new Harmony("local.methodprobe");
@@ -81,6 +82,39 @@ namespace MethodProbe
             AppDomain.CurrentDomain.ProcessExit += (s, e) => Flush();
         }
 
+        static string invIn, invOut; static double invDelay; static DateTime invStart; static int invDone;
+
+        void SetupInvoke()
+        {
+            invIn = Config.Bind("Invoke", "InputFile", Path.Combine(Paths.ConfigPath, "methodprobe-invoke.jsonl"), "JSONL of static methods to call; absent = invoke mode off.").Value;
+            invOut = Config.Bind("Invoke", "OutputFile", Path.Combine(Paths.BepInExRootPath, "methodprobe-invoke-out.jsonl"), "Invoke results JSONL.").Value;
+            invDelay = Config.Bind("Invoke", "DelaySeconds", 10, "Seconds after plugin load before invoking.").Value;
+            var trig = Config.Bind("Invoke", "TriggerMethod", "", "Optional Type::Method (instance or static, called every frame/regularly on the main thread); the first call after the delay runs the invocations there. Empty = run on a background thread after the delay.").Value;
+            if (!File.Exists(invIn)) return;
+            invStart = DateTime.UtcNow;
+            if (string.IsNullOrWhiteSpace(trig))
+            {
+                new Thread(() => { Thread.Sleep((int)(invDelay * 1000)); RunInvoke(); }) { IsBackground = true }.Start();
+                return;
+            }
+            var parts = trig.Split(new[] { "::" }, StringSplitOptions.None);
+            Type t = null;
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies()) { try { t = a.GetType(parts[0], false); } catch { } if (t != null) break; }
+            var m = t?.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly).FirstOrDefault(x => x.Name == parts[1] && x.GetParameters().Length == 0);
+            if (m == null) { Log.LogError("invoke trigger not found: " + trig + "; falling back to background thread"); new Thread(() => { Thread.Sleep((int)(invDelay * 1000)); RunInvoke(); }) { IsBackground = true }.Start(); return; }
+            new Harmony("local.methodprobe.invoke").Patch(m, postfix: new HarmonyMethod(typeof(Plugin).GetMethod(nameof(Tick), BindingFlags.Static | BindingFlags.NonPublic)));
+            Log.LogInfo("invoke mode armed on " + trig + " after " + invDelay + " s");
+        }
+
+        static void Tick() { if (invDone == 0 && (DateTime.UtcNow - invStart).TotalSeconds >= invDelay) Self.Log.LogInfo("tick fired"); if ((DateTime.UtcNow - invStart).TotalSeconds >= invDelay) RunInvoke(); }
+
+        static void RunInvoke()
+        {
+            if (Interlocked.Exchange(ref invDone, 1) != 0) return;
+            try { Invoker.Run(invIn, invOut, Self.Log); }
+            catch (Exception e) { Self.Log.LogError("invoke failed: " + e); }
+        }
+
         static void Post(MethodBase __originalMethod, object[] __args, object __result) => Record(__originalMethod, __args, __result, true);
         static void PostVoid(MethodBase __originalMethod, object[] __args) => Record(__originalMethod, __args, null, false);
 
@@ -114,7 +148,7 @@ namespace MethodProbe
             return Q("<" + t.FullName + ">");
         }
 
-        static string Q(string s)
+        internal static string Q(string s)
         {
             var sb = new StringBuilder("\"");
             foreach (var c in s ?? "")

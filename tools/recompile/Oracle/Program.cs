@@ -11,6 +11,10 @@ static class Program
         var a = Args.Parse(argv);
         if (a.Command == "extract")
             return Extract.Run(a.Get("src"), a.Get("out"), a.Get("srcname", "extract"));
+        if (a.Command == "slots")
+            return Slots.Run(a.All("refs"), a.Get("out"));
+        if (a.Command == "invoke")
+            return Invoke.Run(a.Get("dll"), a.Get("inputs"), a.Get("out"), a.All("refs"));
         if (a.Command == "repair")
             return Repair.Run(a.Get("src"), a.Get("asm"), a.All("refs"), a.Get("orig"));
         if (a.Command == "decls")

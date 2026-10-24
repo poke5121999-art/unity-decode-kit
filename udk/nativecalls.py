@@ -16,7 +16,7 @@ from pathlib import Path
 import capstone
 import pefile
 
-from .recompile import Game, jsonl, write_jsonl
+from .recompile import Game, jsonl, load_slots, slot_calls, write_jsonl
 
 
 # A target shared by more methods than this (Object..ctor, empty bodies) says nothing about which one was meant.
@@ -85,16 +85,26 @@ def main(cfg_path):
             fend.setdefault(base + b, base + e)
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
 
-    def scan(a):
+    def body(a):
+        """Instructions of the function at a. MSVC splits one function into several .pdata chunks, so read up to
+        the next managed method and stop at int3 padding once past the first chunk."""
         i = bisect.bisect_right(starts, a)
-        end = starts[i] if i < len(starts) else a + 0x4000
-        end = min(fend.get(a, end), a + 0x10000)
+        end = min(starts[i] if i < len(starts) else a + 0x4000, a + 0x10000)
+        first = fend.get(a, a)
         sec = next(((v, d) for v, d in secs if v <= a < v + len(d)), None)
-        calls, indirect, unresolved, folded = [], 0, 0, 0
         if sec is None:
-            return calls, indirect, unresolved, folded
+            return
         sva, sdata = sec
         for ins in md.disasm(sdata[a - sva:end - sva], a):
+            if ins.mnemonic == "int3" and ins.address >= first:
+                return
+            yield ins
+
+    def scan(a):
+        calls, indirect, unresolved, folded = [], 0, 0, 0
+        i = bisect.bisect_right(starts, a)
+        end = min(starts[i] if i < len(starts) else a + 0x4000, a + 0x10000)
+        for ins in body(a):
             if ins.mnemonic not in ("call", "jmp"):
                 continue
             op = ins.op_str
@@ -112,14 +122,44 @@ def main(cfg_path):
                 unresolved += 1
         return calls, indirect, unresolved, folded
 
-    rows, unresolved_total = [], 0
+    def listing(a, limit=220):
+        out = []
+        for ins in body(a):
+            line = f"{ins.address:x}: {ins.mnemonic} {ins.op_str}"
+            if ins.mnemonic in ("call", "jmp") and ins.op_str.startswith("0x"):
+                t = int(ins.op_str, 16)
+                label = math_names.get(t) or (sorted(names[t])[0] if t in names else None)
+                if label:
+                    line += f"    ; {label}"
+            out.append(line)
+            if len(out) >= limit:
+                out.append("...")
+                break
+        return "\n".join(out)
+
+    mp = g.p("mathnames.json")
+    math_names = {int(k, 16): v for k, v in json.loads(mp.read_text(encoding="utf-8")).items()} if mp.exists() else {}
+    dropped = re.compile(r"(?<![\w])(?:FUN_|func_0x0*)([0-9a-f]{8,})\(\)")
+    listings = []
+    slots = load_slots(g)
+    rows, unresolved_total, iface_total = [], 0, 0
     for r in jsonl(g.p("ghidra.jsonl")):
         calls, indirect, unresolved, folded = scan(int(r["addr"], 16))
+        # Ghidra drops the xmm arguments of C runtime math calls; the translator needs the instructions instead.
+        if any(int(m.group(1), 16) in math_names for m in dropped.finditer(r["c"])):
+            listings.append({"key": r["key"], "asm": listing(int(r["addr"], 16))})
+        # Interface calls are indirect in machine code; the decompiler shows their slot, which names the method.
+        iface = [[f"{t}::{m}"] for t, m in slot_calls(r["c"], slots)]
+        iface_total += len(iface)
         unresolved_total += unresolved
-        rows.append({"key": r["key"], "calls": calls, "indirect": indirect, "helpers": unresolved, "folded": folded})
+        rows.append({"key": r["key"], "calls": calls + iface, "indirect": indirect, "helpers": unresolved,
+                     "folded": folded, "iface": len(iface)})
     write_jsonl(g.p("native_calls.jsonl"), rows)
+    write_jsonl(g.p("listings.jsonl"), listings)
+    print(f"listings.jsonl: {len(listings)} methods whose C runtime calls lost their arguments")
     n = sum(len(r["calls"]) for r in rows)
-    print(f"native_calls.jsonl: {len(rows)} methods, {n} resolved direct calls, {unresolved_total} helper calls")
+    print(f"native_calls.jsonl: {len(rows)} methods, {n} resolved calls ({iface_total} via interface slots), "
+          f"{unresolved_total} helper calls")
 
     # Callees of every named function (BCL and plugins too), so a C# call that C++ inlined can be expanded one level.
     callees = defaultdict(set)

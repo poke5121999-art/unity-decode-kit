@@ -16,6 +16,7 @@ Usage: python -m udk.recompile <config.json> <command> [args]
 """
 import concurrent.futures as cf
 import json
+import math
 import os
 import random
 import re
@@ -137,7 +138,7 @@ def oracle(*args):
 
 
 def oracle_tool(*args):
-    dll = HERE.parent / "tools" / "recompile" / "Oracle" / "bin" / "Release" / "net8.0" / "Oracle.dll"
+    dll = os.environ.get("ORACLE_DLL") or HERE.parent / "tools" / "recompile" / "Oracle" / "bin" / "Release" / "net8.0" / "Oracle.dll"
     out = subprocess.run(["dotnet", str(dll), *map(str, args)], capture_output=True, text=True, encoding="utf-8")
     if out.returncode != 0:
         raise RuntimeError(out.stdout[-1500:] + out.stderr[-1500:])
@@ -168,6 +169,9 @@ def baseline(g):
 
 def prep(g):
     prep_skeletons(g)
+    print(oracle_tool("slots", "--refs", g.cfg["plugins"], "--refs", Path(g.cfg["unity_data"]) / "Managed" / "UnityEngine",
+                      "--refs", Path(g.cfg["unity_data"]) / "UnityReferenceAssemblies" / "unity-4.8-api",
+                      "--out", g.p("slots.json")).strip())
     rows, by_key = [], {}
     files = {}
     with open(g.dump / "code" / "methods.tsv", encoding="utf-8", errors="replace") as f:
@@ -239,6 +243,9 @@ def prep(g):
 class Context:
     def __init__(self, g):
         self.g = g
+        self.slots = load_slots(g)
+        mp = g.p("mathnames.json")
+        self.math = {int(k, 16): v for k, v in json.loads(mp.read_text(encoding="utf-8")).items()} if mp.exists() else {}
         self.ghidra = {r["key"]: r for r in jsonl(g.p("ghidra.jsonl"))}
         self.decls, self.decl_by_name = {}, defaultdict(list)
         for asm in g.assemblies:
@@ -252,6 +259,7 @@ class Context:
                 k, v = line.split("\t", 1)
                 self.strings[k] = v
         self.il2csharp = {r["key"]: r["body"] for asm in g.assemblies for r in jsonl(g.p(f"cand.il2csharp.{asm}.jsonl"))}
+        self.listings = {r["key"]: r["asm"] for r in jsonl(g.p("listings.jsonl"))}
         self.loose = {}
         for k in list(self.ghidra) + list(self.il2csharp):
             self.loose.setdefault(loose(k), k)
@@ -267,7 +275,7 @@ class Context:
 
     def native(self, key):
         gh = self.lookup(self.ghidra, key)
-        return gh["c"] if gh else "(no native decompilation found)"
+        return annotate_math(annotate_slots(gh["c"], self.slots), self.math) if gh else "(no native decompilation found)"
 
     def pack(self, keys, native_calls=None, budget=60000, draft_cap=3000):
         """Translator context for methods sharing one declaring type: shared declarations first, then each method."""
@@ -289,6 +297,9 @@ class Context:
                 sec.append("NATIVE CALLS (direct calls in machine-code order; identical-code-folding alternatives "
                            "separated by |):\n" + "\n".join(" | ".join(alts) for alts in nc))
             sec.append("NATIVE DECOMPILATION (Ghidra, IL2CPP x64):\n" + c)
+            lst = self.lookup(self.listings, k)
+            if lst:
+                sec.append("DISASSEMBLY (Ghidra dropped C runtime call arguments; they are in xmm0/xmm1 here):\n" + lst)
             il = self.lookup(self.il2csharp, k)
             if il:
                 il = il.strip()
@@ -319,6 +330,51 @@ class Context:
         return t.split("/")[-1].split(".")[-1]
 
 
+# IL2CPP interface call: SomeInvoker(slot, TypeInfo__Ns__IFace, obj, ...); slot indexes the interface's methods.
+SLOT_CALL = re.compile(r"(?<![\w])((?:FUN_|func_0x)[0-9a-f]+)\((\d+),\s*TypeInfo__(\w+?)\s*(?=[,)])")
+
+
+def load_slots(g):
+    path = g.p("slots.json")
+    if not path.exists():
+        return {}
+    table = json.loads(path.read_text(encoding="utf-8"))
+    return {re.sub(r"[.+]", "__", name): (name, methods) for name, methods in table.items()}
+
+
+def slot_calls(c, slots):
+    """[(interface simple name, method name)] for every resolvable interface-slot call in Ghidra C."""
+    out = []
+    for m in SLOT_CALL.finditer(c):
+        hit = slots.get(m.group(3))
+        if hit and int(m.group(2)) < len(hit[1]):
+            out.append((re.sub(r"`\d+", "", hit[0].split("+")[-1].split(".")[-1]), hit[1][int(m.group(2))]))
+    return out
+
+
+def annotate_slots(c, slots):
+    if not slots:
+        return c
+
+    def sub(m):
+        hit = slots.get(m.group(3))
+        if not hit or int(m.group(2)) >= len(hit[1]):
+            return m.group(0)
+        return f"{m.group(1)}/*interface call {hit[0]}.{hit[1][int(m.group(2))]}*/({m.group(2)},TypeInfo__{m.group(3)}"
+    return SLOT_CALL.sub(sub, c)
+
+
+def annotate_math(c, names):
+    """FUN_1804e5a00( -> FUN_1804e5a00/*C runtime sinf*/( for callees udk.mathnames identified by emulation."""
+    if not names:
+        return c
+
+    def sub(m):
+        n = names.get(int(m.group(2), 16))
+        return f"{m.group(1)}/*C runtime {n}*/(" if n else m.group(0)
+    return re.sub(r"(?<![\w])((?:FUN_|func_0x0*)([0-9a-f]{8,}))\(", sub, c)
+
+
 def loose(key):
     k = key.replace("_003C", "_").replace("_003E", "_").replace("<", "_").replace(">", "_")
     i = k.find("::")
@@ -341,6 +397,9 @@ Idioms: rgctx get_Instance chains are Singleton<T>.Instance; il2cpp_object_new(T
 delegate ctor(obj, MethodInfo_M) is a method group; *(T*)(p+0xNN) is the field at that offset (see FIELD OFFSETS);
 klass->static_fields->F is a static field; vtable calls (klass->vtable[n].methodPtr) are virtual/interface calls.
 UnityEngine.Object null checks (op_Implicit / op_Inequality calls) must stay `obj != null` / `if (obj)` on the Unity type.
+Float precision matters: float literals (3.1415927, 0.5) and single-precision C runtime calls (sinf, log10f, fmodf)
+mean float arithmetic (Mathf.Sin, Mathf.Log10, %, float literals with f); the double versions (sin, log10) mean
+double arithmetic. A C runtime call whose arguments Ghidra dropped still takes them: infer them from the names.
 NATIVE CALLS lists what the machine code really calls: every listed call should appear in your body (small getters
 may have been inlined away, so the reverse does not hold). Identical-code folding means a callee's name can belong
 to an unrelated type with the same machine code; pick the alternative that fits the types and arguments.
@@ -424,7 +483,7 @@ def rank(st):
     return (2 if f is None or f >= FAITHFUL else 1, 1.0 if f is None else f)
 
 
-def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8):
+def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
     ctx = Context(g)
     nat, callees = native_index(g)
     loose_nat = {loose(k): k for k in nat}
@@ -434,10 +493,10 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8):
         r = nat.get(k) or nat.get(loose_nat.get(loose(k), ""))
         if r and r["calls"]:
             calls_of[k] = r["calls"]
-    log_path = g.p(f"llm.{asm}.log.jsonl")
+    log_path = g.p(f"llm{tag}.{asm}.log.jsonl")
     done = {r["key"] for r in jsonl(log_path) if r.get("final")}
     keys = [k for k in keys if k not in done]
-    print(f"llm {asm}: {len(keys)} methods to translate with {model}", flush=True)
+    print(f"llm{tag} {asm}: {len(keys)} methods to translate with {model}", flush=True)
     best, retry, pending = {}, {}, list(keys)
     for rnd in range(1, rounds + 1):
         if not pending:
@@ -473,7 +532,7 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8):
                 if k in bodies:
                     got[k] = bodies[k]
                     cands.append({"key": k, "src": "llm", "body": bodies[k]})
-        verdict, summary = oracle_compile(g, asm, cands, f"llmround.{asm}") if cands else ({}, "no candidates")
+        verdict, summary = oracle_compile(g, asm, cands, f"llmround{tag}.{asm}") if cands else ({}, "no candidates")
         nxt = []
         for k in pending:
             v = verdict.get(k)
@@ -498,16 +557,16 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8):
                 retry[k] = missing
                 nxt.append(k)
         write_jsonl(log_path, logs, mode="a")
-        write_jsonl(g.p(f"llm.{asm}.cost.jsonl"), [{"round": rnd, "prompts": len(jobs), "methods": len(pending),
+        write_jsonl(g.p(f"llm{tag}.{asm}.cost.jsonl"), [{"round": rnd, "prompts": len(jobs), "methods": len(pending),
                                                    "in": tin, "out": tout, "cost": round(cost, 3)}], mode="a")
         print(f"round {rnd}: {len(jobs)} prompts, in={tin} out={tout} cost=${cost:.2f}; {summary}", flush=True)
         pending = nxt
-    merged = {r["key"]: r for r in jsonl(g.p(f"cand.llm.{asm}.jsonl"))}
+    merged = {r["key"]: r for r in jsonl(g.p(f"cand.llm{tag}.{asm}.jsonl"))}
     for r in jsonl(log_path):
         if r.get("final") and r.get("best_status", r["status"]) == "ok" and r.get("body"):
-            merged[r["key"]] = {"key": r["key"], "src": "llm", "body": r["body"]}
-    write_jsonl(g.p(f"cand.llm.{asm}.jsonl"), merged.values())
-    print(f"cand.llm.{asm}.jsonl: {len(merged)} compiling bodies so far", flush=True)
+            merged[r["key"]] = {"key": r["key"], "src": "llm" + tag, "body": r["body"]}
+    write_jsonl(g.p(f"cand.llm{tag}.{asm}.jsonl"), merged.values())
+    print(f"cand.llm{tag}.{asm}.jsonl: {len(merged)} compiling bodies so far", flush=True)
 
 
 # ---------- score ----------
@@ -671,6 +730,99 @@ def score(g, producers):
     print(report)
 
 
+def same_value(a, b):
+    a, b = str(a), str(b)
+    if a.lower() == b.lower():
+        return True
+    try:
+        fa, fb = float(a), float(b)
+    except ValueError:
+        return False
+    return fa == fb or (math.isnan(fa) and math.isnan(fb))
+
+
+def difftest(g, asm, prod, inputs, original, quiet=False):
+    """Emit <asm>.dll with producer <prod>'s bodies, run them on the inputs the original game was probed with
+    (tools/runtime-probe invoke mode), and compare every result with the original's.
+
+    Returns {method key: {"ok": n, "total": n, "bad": [(args, expected, got)]}}."""
+    emit = g.p(f"emit/{asm}.{prod}.dll")
+    emit.parent.mkdir(exist_ok=True)
+    oracle("compile", g.p(f"skel/{asm}"), asm, "--candidates", g.p(f"cand.{prod}.{asm}.jsonl"),
+           "--out", g.p(f"res.{prod}.{asm}.jsonl"), "--emit", emit)
+    ours_path = g.p(f"emit/invoke-out.{prod}.{asm}.jsonl")
+    oracle_tool("invoke", "--dll", emit, "--inputs", inputs, "--out", ours_path, "--refs", g.cfg["plugins"],
+                "--refs", Path(g.cfg["unity_data"]) / "Managed" / "UnityEngine")
+
+    def load(p):
+        out = {}
+        for r in jsonl(p):
+            if "ret" in r:
+                args = tuple(repr(float(json.loads(a) if isinstance(a, str) else a)) for a in r["args"])
+                out[(r["key"], args)] = r["ret"]
+        return out
+    orig, ours = load(original), load(ours_path)
+    per = defaultdict(lambda: {"ok": 0, "total": 0, "bad": []})
+    for k, v in orig.items():
+        p = per[k[0]]
+        p["total"] += 1
+        if k in ours and same_value(ours[k], v):
+            p["ok"] += 1
+        else:
+            p["bad"].append((k[1], v, ours.get(k)))
+    calls_ok = sum(p["ok"] for p in per.values())
+    methods_ok = sum(p["ok"] == p["total"] for p in per.values())
+    if not quiet:
+        lines = [f"difftest {asm} {prod}: {calls_ok}/{len(orig)} calls equal the original, "
+                 f"{methods_ok}/{len(per)} methods on every input"]
+        lines += [f"  {p['ok']}/{p['total']} {k}" for k, p in sorted(per.items()) if p["ok"] != p["total"]]
+        print("\n".join(lines))
+    return dict(per)
+
+
+def testfix(g, asm, prod, inputs, original, model="haiku", rounds=2):
+    """Repair bodies that differ from the original game on probed inputs: show the translator the failing
+    calls, keep a new body only when it matches more calls. Writes cand.<prod>fix.<asm>.jsonl."""
+    ctx = Context(g)
+    nat, _ = native_index(g)
+    loose_nat = {loose(k): k for k in nat}
+    fixed = f"{prod}fix"
+    cands = {r["key"]: r for r in jsonl(g.p(f"cand.{prod}.{asm}.jsonl"))}
+    write_jsonl(g.p(f"cand.{fixed}.{asm}.jsonl"), [dict(r, src=fixed) for r in cands.values()])
+    per = difftest(g, asm, fixed, inputs, original)
+    for rnd in range(1, rounds + 1):
+        failing = [k for k, p in per.items() if p["ok"] < p["total"] and k in cands]
+        if not failing:
+            break
+        jobs = []
+        for k in failing:
+            calls_of = {k: (nat.get(k) or nat.get(loose_nat.get(loose(k), ""), {})).get("calls", [])}
+            ex = "\n".join(f"  {k.split('::')[1].split('(')[0]}({', '.join(a)}) -> expected {e}, yours {o}"
+                           for a, e, o in per[k]["bad"][:12])
+            jobs.append((k, ctx.pack([k], calls_of) + "\n\nYOUR CURRENT BODY FOR " + k + ":\n```csharp\n" + cands[k]["body"] +
+                         "\n```\nIt compiles but differs from the original game on these calls (results recorded by running "
+                         "the original binary):\n" + ex + "\nReply with a corrected body that reproduces the original results."))
+        with cf.ThreadPoolExecutor(8) as pool:
+            answers = list(pool.map(lambda j: (j[0], call_llm(j[1], model)), jobs))
+        trial = dict(cands)
+        for k, (text, meta) in answers:
+            body = parse_bodies(text or "", [k]).get(k)
+            if body:
+                trial[k] = {"key": k, "src": fixed, "body": body}
+        write_jsonl(g.p(f"cand.{fixed}.{asm}.jsonl"), trial.values())
+        new = difftest(g, asm, fixed, inputs, original, quiet=True)
+        res = {r["Key"]: r for r in jsonl(g.p(f"res.{fixed}.{asm}.jsonl"))}
+        kept = 0
+        for k in failing:
+            if res.get(k, {}).get("Status") == "ok" and new.get(k, {}).get("ok", 0) > per[k]["ok"]:
+                cands[k] = trial[k]
+                kept += 1
+        write_jsonl(g.p(f"cand.{fixed}.{asm}.jsonl"), [dict(r, src=fixed) for r in cands.values()])
+        per = difftest(g, asm, fixed, inputs, original, quiet=rnd < rounds)
+        print(f"testfix round {rnd}: {len(failing)} failing, {kept} improved")
+    return per
+
+
 def todo(g, asm, out_path):
     """Skeleton bodies that have native code but no faithful compiling body from any producer yet."""
     nat, callees = native_index(g)
@@ -696,6 +848,10 @@ def main(argv):
         prep(g)
     elif cmd == "baseline":
         baseline(g)
+    elif cmd == "difftest":
+        difftest(g, argv[3], argv[4], argv[5], argv[6])
+    elif cmd == "testfix":
+        testfix(g, argv[3], argv[4], argv[5], argv[6])
     elif cmd == "todo":
         todo(g, argv[3], argv[4])
     elif cmd == "score":
@@ -705,7 +861,7 @@ def main(argv):
     elif cmd == "llm":
         kw = dict(a.split("=", 1) for a in argv[5:])
         run_llm(g, argv[3], argv[4], model=kw.get("model", "haiku"), rounds=int(kw.get("rounds", 3)),
-                workers=int(kw.get("workers", 8)))
+                workers=int(kw.get("workers", 8)), tag=kw.get("tag", ""))
     else:
         sys.exit(f"unknown command '{cmd}'")
 
