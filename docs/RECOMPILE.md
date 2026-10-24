@@ -119,6 +119,14 @@ Chi phí đo được với haiku là khoảng 13k token vào cộng 3k token ra
   `SplashScreenApplicationState.OnSplashScreenCompleted`, thứ giữ game kẹt ở splash.
 - **API hết quota giữa chừng.** Mọi method còn lại bị ghi `final` với `llm_fail` và lần chạy sau bỏ qua. Giờ vòng
   nào không prompt nào có trả lời thì dừng (exit ≠ 0), và `llm_fail` không tính là xong.
+- **Script rời trong Assets che mất `Assembly-CSharp.dll` đã dựng lại.** Một file `UdkProbe.cs` nằm thẳng trong
+  Assets làm Unity compile ra Assembly-CSharp của riêng nó, và player dùng bản đó. 31 behaviour của Assembly-CSharp
+  (Rewired InputManager, ControlMapper, FXV fog) thành missing script ở mọi build từ đầu. Hệ quả nằm xa chỗ gây ra:
+  không có Rewired InputManager thì không ai `DontDestroyOnLoad(transform.root)` các manager khởi động, nên menu
+  NRE ở `TimeScaleManager.Instance`. Giờ probe nằm trong asmdef riêng và `UdkBuild` từ chối build khi có xung đột.
+  `python -m udk.scriptid` đổi fileID của `m_Script` ra tên class để soi missing script.
+- **Getter dạng `=> default(T)` của skeleton trông như đã có thân.** `Singleton<T>.Instance` luôn trả null cho tới
+  khi được dịch, và nó thuộc type generic nên lọt khỏi mọi danh sách dịch trước khi có `generic_shape`.
 - **Shader checkout có `#include "Packages/<tên>/..."`.** Chép vào Assets thì đường dẫn đó chết; `shaderremap` sửa
   về đường dẫn mới và bỏ dấu `~` của thư mục (Unity bỏ qua `Samples~`).
 - **Method gốc có thể lặp vô hạn với input xấu** (`CountBits(-1)` dịch phải số học). Bản dựng lại treo y như gốc,
