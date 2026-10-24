@@ -40,6 +40,8 @@ class Game:
         self.work.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("UNITY_DATA", cfg["unity_data"])
         os.environ.setdefault("GAME_PLUGINS", cfg["plugins"])
+        if cfg.get("extra_refs"):
+            os.environ.setdefault("EXTRA_REFS", cfg["extra_refs"])
 
     def p(self, name):
         return self.work / name
@@ -292,6 +294,7 @@ class Context:
                 self.strings[k] = v
         self.il2csharp = {r["key"]: r["body"] for asm in g.assemblies for r in jsonl(g.p(f"cand.il2csharp.{asm}.jsonl"))}
         self.listings = {r["key"]: r["asm"] for r in jsonl(g.p("listings.jsonl"))}
+        self.state_machine = state_machines(list(self.ghidra))
         # Stub DLLs drop closure classes (<>c, <>c__DisplayClass), so a lambda's native body only reaches the
         # translator through the method that declares it: <Parent>b__N_M / <Parent>g__Local|N_M of the same type.
         self.lambdas = defaultdict(list)
@@ -340,6 +343,12 @@ class Context:
                 sec.append("NATIVE CALLS (direct calls in machine-code order; identical-code-folding alternatives "
                            "separated by |):\n" + "\n".join(" | ".join(alts) for alts in nc))
             sec.append("NATIVE DECOMPILATION (Ghidra, IL2CPP x64):\n" + c)
+            mn = self.state_machine.get(k) or self.state_machine.get(self.loose.get(loose(k), ""))
+            if mn:
+                sec.append(f"THIS IS AN ASYNC/ITERATOR METHOD. Its logic is the state machine's MoveNext below ({mn.split('::')[0]}). "
+                           "Write the method body as the original source: async code with await (the method becomes async) or an "
+                           "iterator with yield return. Do not create or reference the state machine struct or its builder.\n"
+                           + self.native(mn))
             owner = loose(k.split("::")[0] + "::x()").split("::")[0]
             name = re.sub(r"`\d+$", "", k.split("::")[1].split("(")[0])
             for lk in self.lambdas.get((owner, name), [])[:12]:
@@ -624,9 +633,32 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
 
 # ---------- score ----------
 
+def state_machines(keys):
+    """{method key: MoveNext key} for async/iterator methods, matched by the compiler's <Name>d__N naming."""
+    by_owner = defaultdict(list)
+    for k in keys:
+        typ, rest = k.split("::", 1)
+        if rest.startswith("MoveNext(") and "/" in typ:
+            outer, inner = typ.rsplit("/", 1)
+            m = re.match(r"^(?:_003C|<|_)([^<>]+?)(?:_003E|>|_)d__\d+$", inner)
+            if m:
+                by_owner[(loose(outer + "::x()").split("::")[0], m.group(1))].append(k)
+    out = {}
+    for k in keys:
+        typ, rest = k.split("::", 1)
+        name = re.sub(r"`\d+$", "", rest.split("(")[0])
+        hit = by_owner.get((loose(typ + "::x()").split("::")[0], name))
+        if hit and len(hit) == 1:
+            out[k] = hit[0]
+    return out
+
+
 def native_index(g):
     nat = {r["key"]: r for r in jsonl(g.p("native_calls.jsonl"))}
     callees = json.loads(g.p("callees.json").read_text(encoding="utf-8")) if g.p("callees.json").exists() else {}
+    # An async/iterator method's logic lives in its MoveNext; a body written back as await/yield must make those calls.
+    for parent, mn in state_machines(list(nat)).items():
+        nat[parent] = dict(nat[parent], calls=nat[parent]["calls"] + nat[mn]["calls"])
     for k, r in nat.items():
         typ, rest = k.split("::", 1)
         callees.setdefault(simple_name(typ) + "::" + rest.split("(")[0], [x for alts in r["calls"] for x in alts])

@@ -2,7 +2,7 @@
 
 Generic helpers to measure how far a Unity project (e.g. AssetRipper export) boots with recovered script DLLs.
 
-- `Editor/UdkBuild.cs` - `UdkBuild.BuildWindows()`: Windows64 Mono development build of all enabled scenes
+- `Editor/UdkBuild.cs` - `UdkBuild.BuildWindows()`: Windows64 (or Linux64 with env `UDK_BUILD_TARGET=Linux64`) Mono development build of all enabled scenes
   (falls back to every scene in Assets/Scenes, Startup/Splash first). Output path from env `UDK_BUILD_OUT`.
   Logs `[UdkBuild] result=...` and build errors. Exit code 0 on success.
 - `UdkProbe.cs` - runtime (not Editor). Auto-starts; logs scene loads, counts log messages per type, top exceptions,

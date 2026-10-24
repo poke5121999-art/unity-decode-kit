@@ -347,6 +347,7 @@ sealed class Skeleton
     static SyntaxNode SwapBody(SyntaxNode n, string kind, BlockSyntax b) => n switch
     {
         ClassDeclarationSyntax cls => cls.AddMembers(NewCtor(cls, kind == "newcctor", b)),
+        MethodDeclarationSyntax md => Folded(md, b).WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),
         BaseMethodDeclarationSyntax m => m.WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),
         AccessorDeclarationSyntax acc => acc.WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),
         PropertyDeclarationSyntax p => p.WithExpressionBody(null).WithSemicolonToken(default)
@@ -357,6 +358,26 @@ sealed class Skeleton
                 SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration, b)))),
         _ => n,
     };
+
+    // A body written as the original async/iterator code (await, yield) replaces the compiler's state machine:
+    // the method gets back its async modifier and loses the [AsyncStateMachine]/[IteratorStateMachine] attribute
+    // that pointed at the old struct (the compiler emits its own). The old struct stays, unused.
+    static MethodDeclarationSyntax Folded(MethodDeclarationSyntax md, BlockSyntax b)
+    {
+        bool awaits = b.DescendantNodes(n => n is not AnonymousFunctionExpressionSyntax and not LocalFunctionStatementSyntax)
+            .OfType<AwaitExpressionSyntax>().Any();
+        bool yields = b.DescendantNodes(n => n is not AnonymousFunctionExpressionSyntax and not LocalFunctionStatementSyntax)
+            .OfType<YieldStatementSyntax>().Any();
+        if (!awaits && !yields) return md;
+        var lists = SyntaxFactory.List(md.AttributeLists
+            .Select(l => l.WithAttributes(SyntaxFactory.SeparatedList(l.Attributes.Where(a =>
+                !a.Name.ToString().EndsWith("AsyncStateMachine") && !a.Name.ToString().EndsWith("IteratorStateMachine")))))
+            .Where(l => l.Attributes.Count > 0));
+        md = md.WithAttributeLists(lists);
+        if (awaits && !md.Modifiers.Any(SyntaxKind.AsyncKeyword))
+            md = md.AddModifiers(SyntaxFactory.Token(SyntaxKind.AsyncKeyword).WithTrailingTrivia(SyntaxFactory.Space));
+        return md;
+    }
 
     // ILSpy drops constructors that only run field initializers; recovering them means adding the member back.
     static ConstructorDeclarationSyntax NewCtor(ClassDeclarationSyntax cls, bool isStatic, BlockSyntax b)
