@@ -4,3 +4,8 @@ out/
 __pycache__/
 *.pyc
 node_modules/
+tools/recompile/Oracle/bin/
+tools/recompile/Oracle/obj/
+tools/runtime-probe/obj/
+tools/runtime-probe/out/
+tools/runtime-probe/bin/
