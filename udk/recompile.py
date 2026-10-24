@@ -260,6 +260,17 @@ class Context:
                 self.strings[k] = v
         self.il2csharp = {r["key"]: r["body"] for asm in g.assemblies for r in jsonl(g.p(f"cand.il2csharp.{asm}.jsonl"))}
         self.listings = {r["key"]: r["asm"] for r in jsonl(g.p("listings.jsonl"))}
+        # Stub DLLs drop closure classes (<>c, <>c__DisplayClass), so a lambda's native body only reaches the
+        # translator through the method that declares it: <Parent>b__N_M / <Parent>g__Local|N_M of the same type.
+        self.lambdas = defaultdict(list)
+        for k in self.ghidra:
+            typ, rest = k.split("::", 1)
+            m = re.match(r"^<([^>]+)>[bg]__", rest)
+            if not m:
+                continue
+            closure = "/" in typ and re.search(r"/(__c|_003C_003Ec|<>c)", typ)
+            owner = typ.rsplit("/", 1)[0] if closure else typ
+            self.lambdas[(loose(owner + "::x()").split("::")[0], m.group(1))].append(k)
         self.loose = {}
         for k in list(self.ghidra) + list(self.il2csharp):
             self.loose.setdefault(loose(k), k)
@@ -297,6 +308,11 @@ class Context:
                 sec.append("NATIVE CALLS (direct calls in machine-code order; identical-code-folding alternatives "
                            "separated by |):\n" + "\n".join(" | ".join(alts) for alts in nc))
             sec.append("NATIVE DECOMPILATION (Ghidra, IL2CPP x64):\n" + c)
+            owner = loose(k.split("::")[0] + "::x()").split("::")[0]
+            name = re.sub(r"`\d+$", "", k.split("::")[1].split("(")[0])
+            for lk in self.lambdas.get((owner, name), [])[:12]:
+                sec.append(f"LAMBDA / LOCAL FUNCTION DECLARED IN THIS METHOD ({lk.split('::', 1)[1]}; its closure class is "
+                           "not in the skeleton, so write it inline as a lambda or local function):\n" + self.native(lk))
             lst = self.lookup(self.listings, k)
             if lst:
                 sec.append("DISASSEMBLY (Ghidra dropped C runtime call arguments; they are in xmm0/xmm1 here):\n" + lst)
