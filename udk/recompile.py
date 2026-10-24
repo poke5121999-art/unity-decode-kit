@@ -616,7 +616,9 @@ def run_llm(g, asm, keys_file, model="haiku", rounds=3, workers=8, tag=""):
                 b["errors"] = ["(no answer parsed; reply with a ### key line and one csharp block)"]
             logs.append({"key": k, "round": rnd, "status": st["status"], "fidelity": st.get("fidelity"),
                          "final": not again, "errors": st["errors"], "body": None if again else b["body"],
-                         "best_status": b["status"], "best_fidelity": b.get("fidelity")})
+                         "best_status": b["status"], "best_fidelity": b.get("fidelity"),
+                         # Kept even when it fails, so a later Oracle fix can re-score it without another LLM call.
+                         "last_body": st.get("body")})
             if again:
                 retry[k] = missing
                 nxt.append(k)

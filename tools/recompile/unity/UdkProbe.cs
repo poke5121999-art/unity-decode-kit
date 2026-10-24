@@ -16,6 +16,9 @@ public static class UdkProbe
     static int nextShot;
     static float nextWrite = 10f;
     static bool lastSceneDirty;
+    // UDK_PROBE_CALLS="20:Runtime.Splash.SplashScreenController.Skip;40:..." invokes a method on every live object of
+    // the type at that time, to drive a game whose input layer cannot be simulated.
+    static readonly List<(float t, string type, string method)> calls = new List<(float, string, string)>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void Init()
@@ -27,6 +30,12 @@ public static class UdkProbe
         SceneManager.sceneLoaded += (s, m) => Rec("loaded " + s.name + " mode=" + m);
         SceneManager.sceneUnloaded += s => Rec("unloaded " + s.name);
         SceneManager.activeSceneChanged += (a, b) => Rec("active " + a.name + " -> " + b.name);
+        foreach (var c in (Environment.GetEnvironmentVariable("UDK_PROBE_CALLS") ?? "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = c.Split(new[] { ':' }, 2);
+            int dot = parts[1].LastIndexOf('.');
+            calls.Add((float.Parse(parts[0]), parts[1].Substring(0, dot), parts[1].Substring(dot + 1)));
+        }
         var go = new GameObject("UdkProbe");
         UnityEngine.Object.DontDestroyOnLoad(go);
         go.hideFlags = HideFlags.HideAndDontSave;
@@ -68,6 +77,57 @@ public static class UdkProbe
         try { File.WriteAllText(Path.Combine(dir, "probe-summary.json"), sb.ToString()); } catch { }
     }
 
+    static void Call(string typeName, string method)
+    {
+        var type = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(typeName)).FirstOrDefault(x => x != null);
+        if (type == null) { Rec("call " + typeName + " type not found"); return; }
+        var objs = UnityEngine.Object.FindObjectsByType(type, FindObjectsInactive.Include, FindObjectsSortMode.None);
+        var mi = type.GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+        foreach (var o in objs)
+            try { mi.Invoke(o, null); } catch (Exception e) { Rec("call " + method + " threw " + (e.InnerException ?? e).GetType().Name); }
+        Rec("call " + typeName + "." + method + " on " + objs.Length + " objects");
+    }
+
+    // What is on screen and why: active objects with their components, animator progress, cameras and canvases.
+    static void DumpScene(string path)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var sc = SceneManager.GetSceneAt(i);
+            sb.Append("scene ").Append(sc.name).Append('\n');
+            foreach (var root in sc.GetRootGameObjects()) Dump(root.transform, 1, sb);
+        }
+        try { File.WriteAllText(path, sb.ToString()); } catch { }
+    }
+
+    static void Dump(Transform t, int depth, StringBuilder sb)
+    {
+        if (depth > 8) return;
+        var go = t.gameObject;
+        sb.Append(' ', depth * 2).Append(go.activeInHierarchy ? "" : "(off) ").Append(go.name).Append(" [");
+        foreach (var c in go.GetComponents<Component>())
+        {
+            if (c == null) { sb.Append("MISSING-SCRIPT "); continue; }
+            sb.Append(c.GetType().Name);
+            if (c is Behaviour b && !b.enabled) sb.Append("(disabled)");
+            if (c is Animator an && an.isActiveAndEnabled)
+            {
+                var st = an.GetCurrentAnimatorStateInfo(0);
+                sb.Append("{ctrl=").Append(an.runtimeAnimatorController ? an.runtimeAnimatorController.name : "null")
+                  .Append(" clips=").Append(an.runtimeAnimatorController ? an.runtimeAnimatorController.animationClips.Length : 0)
+                  .Append(" t=").Append(st.normalizedTime.ToString("F2")).Append(" len=").Append(st.length.ToString("F2")).Append("}");
+            }
+            if (c is Camera cam) sb.Append("{depth=").Append(cam.depth).Append(" mask=").Append(cam.cullingMask).Append(" rt=").Append(cam.targetTexture ? cam.targetTexture.name : "-").Append("}");
+            if (c is Canvas cv) sb.Append("{mode=").Append(cv.renderMode).Append(" order=").Append(cv.sortingOrder).Append("}");
+            if (c is CanvasGroup cg) sb.Append("{alpha=").Append(cg.alpha.ToString("F2")).Append("}");
+            if (c is Renderer r && r.sharedMaterial) sb.Append("{mat=").Append(r.sharedMaterial.name).Append(" shader=").Append(r.sharedMaterial.shader.name).Append("}");
+            sb.Append(' ');
+        }
+        sb.Append("]\n");
+        if (go.activeInHierarchy) foreach (Transform ch in t) Dump(ch, depth + 1, sb);
+    }
+
     class Ticker : MonoBehaviour
     {
         void Update()
@@ -76,8 +136,11 @@ public static class UdkProbe
             if (nextShot < shotTimes.Length && t >= shotTimes[nextShot])
             {
                 try { ScreenCapture.CaptureScreenshot(Path.Combine(dir, "shot-" + shotTimes[nextShot] + "s.png")); } catch { }
+                DumpScene(Path.Combine(dir, "scene-" + shotTimes[nextShot] + "s.txt"));
                 nextShot++;
             }
+            for (int i = calls.Count - 1; i >= 0; i--)
+                if (t >= calls[i].t) { Call(calls[i].type, calls[i].method); calls.RemoveAt(i); }
             if (t >= nextWrite) { nextWrite += 10f; Write(); }
         }
         void OnApplicationQuit() { Write(); }

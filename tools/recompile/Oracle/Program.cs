@@ -218,6 +218,7 @@ sealed class Skeleton
             if (synErr.Length > 0) { r.Status = "syntax_error"; r.Errors.AddRange(synErr); continue; }
             live[c.Key] = (c, block.WithAdditionalAnnotations(new SyntaxAnnotation(CandAnnotation, c.Key)));
         }
+        var requalified = new Dictionary<string, int>();
         for (int round = 1; round <= maxRounds && live.Count > 0; round++)
         {
             var trees = Rewrite(live.ToDictionary(k => k.Key, v => v.Value.Block));
@@ -234,8 +235,9 @@ sealed class Skeleton
                 if (!failed.TryGetValue(key, out var l)) failed[key] = l = new List<string>();
                 if (l.Count < 4) l.Add($"{d.Id}: {d.GetMessage()}");
             }
-            Console.WriteLine($"round {round}: live={live.Count} failed={failed.Count}");
-            if (failed.Count == 0)
+            int qualified = Qualify(comp, live, failed, requalified);
+            Console.WriteLine($"round {round}: live={live.Count} failed={failed.Count}" + (qualified > 0 ? $" ({qualified} kept after qualifying type names)" : ""));
+            if (failed.Count == 0 && qualified == 0)
             {
                 if (stray > BaseErrors)
                     Console.WriteLine($"WARNING: {stray - BaseErrors} errors outside any candidate and the skeleton; 'ok' is not emit-clean");
@@ -252,6 +254,72 @@ sealed class Skeleton
         }
         foreach (var k in live.Keys) res[k].Status = "undecided";
         return res;
+    }
+
+    // A translated body names a type the skeleton file never imported (Action, StageManager in another namespace).
+    // When every error of a body is an unresolved name and each name is exactly one type in the compilation, write
+    // it fully qualified and keep the body for the next round instead of dropping it.
+    Dictionary<(string, int), List<INamedTypeSymbol>> _typesByName;
+
+    int Qualify(CSharpCompilation comp, Dictionary<string, (Candidate C, BlockSyntax Block)> live,
+        Dictionary<string, List<string>> failed, Dictionary<string, int> attempts)
+    {
+        if (_typesByName == null)
+        {
+            _typesByName = new();
+            void Walk(INamespaceOrTypeSymbol ns)
+            {
+                foreach (var m in ns.GetMembers())
+                {
+                    if (m is INamespaceSymbol sub) Walk(sub);
+                    else if (m is INamedTypeSymbol t && !t.IsImplicitlyDeclared && t.CanBeReferencedByName
+                        && (t.DeclaredAccessibility == Accessibility.Public || t.ContainingAssembly.Equals(comp.Assembly, SymbolEqualityComparer.Default)))
+                    {
+                        var k = (t.Name, t.Arity);
+                        if (!_typesByName.TryGetValue(k, out var l)) _typesByName[k] = l = new();
+                        l.Add(t);
+                        Walk(t);
+                    }
+                }
+            }
+            Walk(comp.GlobalNamespace);
+        }
+        var byKey = new Dictionary<string, List<(SyntaxNode Owner, SimpleNameSyntax Name)>>();
+        var bad = new HashSet<string>();
+        foreach (var d in comp.GetDiagnostics())
+        {
+            if (d.Severity != DiagnosticSeverity.Error || !d.Location.IsInSource) continue;
+            var node = d.Location.SourceTree.GetRoot().FindNode(d.Location.SourceSpan, getInnermostNodeForTie: true);
+            var owner = node.AncestorsAndSelf().FirstOrDefault(n => n.HasAnnotations(CandAnnotation));
+            if (owner == null) continue;
+            var key = owner.GetAnnotations(CandAnnotation).First().Data;
+            var name = node as SimpleNameSyntax ?? node.DescendantNodesAndSelf().OfType<SimpleNameSyntax>().FirstOrDefault();
+            if (d.Id is not ("CS0246" or "CS0103") || name == null
+                || !_typesByName.TryGetValue((name.Identifier.Text, name.Arity), out var types) || types.Count != 1)
+            { bad.Add(key); continue; }
+            if (!byKey.TryGetValue(key, out var l)) byKey[key] = l = new();
+            l.Add((owner, name));
+        }
+        int kept = 0;
+        foreach (var (key, names) in byKey)
+        {
+            if (bad.Contains(key) || !live.ContainsKey(key) || attempts.GetValueOrDefault(key) >= 2) continue;
+            attempts[key] = attempts.GetValueOrDefault(key) + 1;
+            var owner = names[0].Owner;
+            var fq = SymbolDisplayFormat.FullyQualifiedFormat;
+            var block = owner.ReplaceNodes(names.Select(n => n.Name).Distinct(), (o, _) =>
+            {
+                var t = _typesByName[(o.Identifier.Text, o.Arity)][0];
+                var container = t.ContainingType?.ToDisplayString(fq) ?? t.ContainingNamespace.ToDisplayString(fq);
+                var text = (t.ContainingNamespace.IsGlobalNamespace && t.ContainingType == null ? "global::" : container + ".") + o.ToString();
+                return SyntaxFactory.ParseName(text).WithTriviaFrom(o);
+            });
+            if (block is not BlockSyntax b) continue;
+            live[key] = (live[key].C, b);
+            failed.Remove(key);
+            kept++;
+        }
+        return kept;
     }
 
     // Every method a recovered body reaches, as "Type::MetadataName", for comparison with the native call list.
