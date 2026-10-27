@@ -6,6 +6,8 @@ import io, json, re, sys
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, "D:/walking-trade-ref/udk")
 from udk.recompile import loose
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+from recovered import recovered
 
 GET = re.compile(r"^\s*return\s+(?:\(\s*\w+\s*\*?\s*\)\s*)?\(?(this->fields\)?|TypeInfo__[\w]+->static_fields)\s*(?:\.|->)\s*(\w+)\s*;\s*$")
 SET = re.compile(r"^\s*\(?(this->fields\)?|TypeInfo__[\w]+->static_fields)\s*(?:\.|->)\s*(\w+)\s*=\s*value\s*;\s*$")
@@ -17,6 +19,9 @@ def code_lines(c):
     for l in body.splitlines():
         s = l.strip()
         if not s or s.startswith(("il2cpp_", "//", "/*", "if (DAT_", "DAT_", "}", "return;")) or "write_barrier" in s:
+            continue
+        # Static class-init guard il2cpp puts before any static field access.
+        if re.match(r"^if \(\*\(int \*\)&\(TypeInfo__\w+->_1\)\.field_0x1c == 0\) \{$", s):
             continue
         if re.match(r"^[\w\s\*]+ \*?\w+;$", s) and "=" not in s:
             continue
@@ -31,8 +36,7 @@ def main(W, asms):
     nat.setdefault(loose(r["key"]), r["c"])
 
   for asm in asms:
-    ok = {loose(json.loads(l)["Key"]) for l in io.open(f"{W}/res.best.{asm}.jsonl", encoding="utf-8")
-          if json.loads(l)["Status"] == "ok"}
+    ok = recovered(W, asm, "trivial")
     keys = [l.split("\t")[0] for l in io.open(f"{W}/keys.{asm}.tsv", encoding="utf-8").read().splitlines()[1:] if l]
     out = []
     for k in keys:

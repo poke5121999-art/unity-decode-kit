@@ -8,6 +8,8 @@ import capstone
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, "D:/walking-trade-ref/udk")
 from udk.recompile import loose
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+from recovered import recovered
 
 W, dll, dump = sys.argv[1], sys.argv[2], sys.argv[3]
 data = open(dll, "rb").read()
@@ -62,8 +64,7 @@ for l in io.open(f"{W}/ghidra.jsonl", encoding="utf-8"):
         addr.setdefault(loose(r["key"]), int(r["addr"], 16))
 
 for asm in sys.argv[4:]:
-    ok = {loose(json.loads(l)["Key"]) for l in io.open(f"{W}/res.best.{asm}.jsonl", encoding="utf-8")
-          if json.loads(l)["Status"] == "ok"}
+    ok = recovered(W, asm, "folded")
     keys = [l.split("\t")[0] for l in io.open(f"{W}/keys.{asm}.tsv", encoding="utf-8").read().splitlines()[1:] if l]
     out, miss = [], 0
     for k in keys:

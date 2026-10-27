@@ -12,17 +12,18 @@ for l in io.open(f"{W}/ghidra.jsonl", encoding="utf-8"):
     r = json.loads(l)
     nat.setdefault(loose(r["key"]), r["c"])
 STORE = re.compile(r"\(this->fields\)\.(\w+)\s*=\s*p\w+;")
+STATIC_STORE = re.compile(r"static_fields->(\w+)\s*=")
 for asm in sys.argv[2:]:
     ok = {loose(json.loads(l)["Key"]) for l in io.open(f"{W}/res.best.{asm}.jsonl", encoding="utf-8")
           if json.loads(l)["Status"] == "ok"}
     hits = []
     for l in io.open(f"{W}/keys.{asm}.tsv", encoding="utf-8").read().splitlines()[1:]:
         k = l.split("\t")[0]
-        if "::.ctor(" not in k or loose(k) in ok:
+        if ("::.ctor(" not in k and "::.cctor(" not in k) or loose(k) in ok:
             continue
         c = nat.get(loose(k), "")
         if "il2cpp_object_new" in c:
-            hits.append((k, sorted(set(STORE.findall(c)))))
+            hits.append((k, sorted(set(STORE.findall(c)) | set(STATIC_STORE.findall(c)))))
     print(f"{asm}: {len(hits)} constructors allocate into fields but have no recovered body")
     for k, f in hits:
         print(f"   {k}  fields={f}")
