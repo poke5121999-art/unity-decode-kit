@@ -6,8 +6,8 @@ import io, json, re, sys
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 
-W = Path(sys.argv[1])
-decomp = dict(a.split("=", 1) for a in sys.argv[2:])
+W = Path(sys.argv[1]) if __name__ == "__main__" else None
+decomp = dict(a.split("=", 1) for a in sys.argv[2:]) if __name__ == "__main__" else {}
 STUB = re.compile(r"^\s*(?:return\s+(?:null|default(?:\([^)]*\))?|0[fFdDmMuUlL]?|0\.0[fFdD]?|false)\s*;)?\s*$")
 _files = {}
 
@@ -107,61 +107,66 @@ def status(asm, key, needs=()):
     return "patched", ""
 
 
-rows = []
-for f in sorted((W / "census").glob("stubcallees.*.txt")):
-    asm = f.name[len("stubcallees."):-4]
-    for line in f.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"\s*(\d+)\s+(\S+)\s+<-\s+(\S+)", line)
-        if m:
-            st, why = status(asm, m.group(2))
-            rows.append(("stub_callee", asm, m.group(2), st, f"called by {m.group(3)} ({m.group(1)}x); {why}"))
-ctor = (W / "census" / "ctorgap.txt").read_text(encoding="utf-8").splitlines() if (W / "census" / "ctorgap.txt").exists() else []
-asm = None
-for line in ctor:
-    m = re.match(r"^(\S+): \d+ constructors", line)
-    if m:
-        asm = m.group(1)
-        continue
-    m = re.match(r"\s+(\S+)\s+fields=\[(.*)\]", line)
-    if m and asm:
-        fields = [x.strip(" '") for x in m.group(2).split(",") if x.strip()]
-        st, why = status(asm, m.group(1), [re.sub(r"^_?(\w+?)_k__BackingField$", r"\1", x) for x in fields])
-        rows.append(("ctor_gap", asm, m.group(1), st, why))
-lint = W / "census" / "lintcensus.tsv"
-if lint.exists():
-    for line in lint.read_text(encoding="utf-8").splitlines()[1:]:
-        cls, asm, where, ev = line.split("\t", 3)
-        if cls == "ctor_init_lost":
-            st, why = status(asm, where)
-            rows.append((cls, asm, where, st, ev + ("; " + why if why else "")))
-        elif cls == "base_defaults":
-            rows.append((cls, asm, where, "check", ev))
-        else:
-            rows.append((cls, asm, where, "check", ev))
-blobs = W / "census" / "rvablobs.jsonl"
-if blobs.exists():
-    seen = set()
-    for r in map(json.loads, io.open(blobs, encoding="utf-8")):
-        if "values" not in r or (r["key"], r["hash"]) in seen:
-            continue
-        seen.add((r["key"], r["hash"]))
-        asm = next((a for a in decomp if r["key"].startswith(("Runtime.", "FXV.")) and a == "Runtime" or a == "Assembly-CSharp"), None)
-        body = None
-        for a in decomp:
-            body = method_body(a, r["key"])
-            if body is not None:
-                asm = a
-                break
-        vals = [v for v in r["values"] if v != "..."]
-        sig = [str(int(v)) if float(v).is_integer() else repr(v).rstrip("0") for v in vals if v not in (0, 0.0)][:4]
-        if body is None:
-            st, why = "unknown", "method not found in deployed decompile"
-        elif all(re.search(rf"(?<![\d.]){re.escape(s)}", body) for s in sig):
-            st, why = "patched", ""
-        else:
-            st, why = "open", "real values not in deployed body"
-        rows.append(("blob_data", asm or "?", r["key"], st, f"{r['elem']}[{r['count']}]={vals[:12]}; {why}"))
+def main():
+  rows = []
+  for f in sorted((W / "census").glob("stubcallees.*.txt")):
+      asm = f.name[len("stubcallees."):-4]
+      for line in f.read_text(encoding="utf-8").splitlines():
+          m = re.match(r"\s*(\d+)\s+(\S+)\s+<-\s+(\S+)", line)
+          if m:
+              st, why = status(asm, m.group(2))
+              rows.append(("stub_callee", asm, m.group(2), st, f"called by {m.group(3)} ({m.group(1)}x); {why}"))
+  ctor = (W / "census" / "ctorgap.txt").read_text(encoding="utf-8").splitlines() if (W / "census" / "ctorgap.txt").exists() else []
+  asm = None
+  for line in ctor:
+      m = re.match(r"^(\S+): \d+ constructors", line)
+      if m:
+          asm = m.group(1)
+          continue
+      m = re.match(r"\s+(\S+)\s+fields=\[(.*)\]", line)
+      if m and asm:
+          fields = [x.strip(" '") for x in m.group(2).split(",") if x.strip()]
+          st, why = status(asm, m.group(1), [re.sub(r"^_?(\w+?)_k__BackingField$", r"\1", x) for x in fields])
+          rows.append(("ctor_gap", asm, m.group(1), st, why))
+  lint = W / "census" / "lintcensus.tsv"
+  if lint.exists():
+      for line in lint.read_text(encoding="utf-8").splitlines()[1:]:
+          cls, asm, where, ev = line.split("\t", 3)
+          if cls == "ctor_init_lost":
+              st, why = status(asm, where)
+              rows.append((cls, asm, where, st, ev + ("; " + why if why else "")))
+          elif cls == "base_defaults":
+              rows.append((cls, asm, where, "check", ev))
+          else:
+              rows.append((cls, asm, where, "check", ev))
+  blobs = W / "census" / "rvablobs.jsonl"
+  if blobs.exists():
+      seen = set()
+      for r in map(json.loads, io.open(blobs, encoding="utf-8")):
+          if "values" not in r or (r["key"], r["hash"]) in seen:
+              continue
+          seen.add((r["key"], r["hash"]))
+          asm = next((a for a in decomp if r["key"].startswith(("Runtime.", "FXV.")) and a == "Runtime" or a == "Assembly-CSharp"), None)
+          body = None
+          for a in decomp:
+              body = method_body(a, r["key"])
+              if body is not None:
+                  asm = a
+                  break
+          vals = [v for v in r["values"] if v != "..."]
+          sig = [str(int(v)) if float(v).is_integer() else repr(v).rstrip("0") for v in vals if v not in (0, 0.0)][:4]
+          if body is None:
+              st, why = "unknown", "method not found in deployed decompile"
+          elif all(re.search(rf"(?<![\d.]){re.escape(s)}", body) for s in sig):
+              st, why = "patched", ""
+          else:
+              st, why = "open", "real values not in deployed body"
+          rows.append(("blob_data", asm or "?", r["key"], st, f"{r['elem']}[{r['count']}]={vals[:12]}; {why}"))
 
-print("class\tasm\tkey\tstatus\tdetail")
-for r in rows:
-    print("\t".join(str(x).replace("\t", " ") for x in r))
+  print("class\tasm\tkey\tstatus\tdetail")
+  for r in rows:
+      print("\t".join(str(x).replace("\t", " ") for x in r))
+
+
+if __name__ == "__main__":
+    main()
