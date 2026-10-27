@@ -73,6 +73,12 @@ sealed class Candidate
     public string Key { get; set; }
     public string Src { get; set; }
     public string Body { get; set; }
+    // Constructor initializer to put in place of the skeleton's (`base(baseCost, data)`); the skeleton only knows
+    // default arguments, and a body row cannot reach the initializer.
+    public string Init { get; set; }
+
+    public BlockSyntax Annotate(BlockSyntax b) =>
+        string.IsNullOrEmpty(Init) ? b : b.WithAdditionalAnnotations(new SyntaxAnnotation(Skeleton.InitAnnotation, Init));
 
     public static List<Candidate> ReadJsonl(string path)
     {
@@ -107,6 +113,7 @@ sealed class Result
 sealed class Skeleton
 {
     const string CandAnnotation = "udk-cand";
+    public const string InitAnnotation = "udk-init";
     string _asm;
     List<SyntaxTree> _trees;
     List<MetadataReference> _refs;
@@ -216,7 +223,7 @@ sealed class Skeleton
             var synErr = block == null ? new[] { "not a block" } :
                 block.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.ToString()).Take(3).ToArray();
             if (synErr.Length > 0) { r.Status = "syntax_error"; r.Errors.AddRange(synErr); continue; }
-            live[c.Key] = (c, block.WithAdditionalAnnotations(new SyntaxAnnotation(CandAnnotation, c.Key)));
+            live[c.Key] = (c, c.Annotate(block).WithAdditionalAnnotations(new SyntaxAnnotation(CandAnnotation, c.Key)));
         }
         var requalified = new Dictionary<string, int>();
         for (int round = 1; round <= maxRounds && live.Count > 0; round++)
@@ -453,6 +460,8 @@ sealed class Skeleton
     {
         ClassDeclarationSyntax cls => cls.AddMembers(NewCtor(cls, kind == "newcctor", b)),
         MethodDeclarationSyntax md => Folded(md, b).WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),
+        ConstructorDeclarationSyntax ctor when b.GetAnnotations(InitAnnotation).FirstOrDefault() is { } init =>
+            ctor.WithExpressionBody(null).WithSemicolonToken(default).WithBody(b).WithInitializer(Initializer(init.Data)),
         BaseMethodDeclarationSyntax m => m.WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),
         AccessorDeclarationSyntax acc => acc.WithExpressionBody(null).WithSemicolonToken(default).WithBody(b),
         PropertyDeclarationSyntax p => p.WithExpressionBody(null).WithSemicolonToken(default)
@@ -463,6 +472,11 @@ sealed class Skeleton
                 SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration, b)))),
         _ => n,
     };
+
+    static ConstructorInitializerSyntax Initializer(string text) =>
+        SyntaxFactory.ParseCompilationUnit("class C { C() : " + text + " {} }")
+            .DescendantNodes().OfType<ConstructorInitializerSyntax>().Single()
+            .WithLeadingTrivia(SyntaxFactory.Space);
 
     // A body written as the original async/iterator code (await, yield) replaces the compiler's state machine:
     // the method gets back its async modifier and loses the [AsyncStateMachine]/[IteratorStateMachine] attribute
@@ -497,7 +511,7 @@ sealed class Skeleton
 
     public bool Emit(List<Candidate> ok, string path)
     {
-        var bodies = ok.ToDictionary(c => c.Key, c => (BlockSyntax)SyntaxFactory.ParseStatement("{\n" + c.Body + "\n}"));
+        var bodies = ok.ToDictionary(c => c.Key, c => c.Annotate((BlockSyntax)SyntaxFactory.ParseStatement("{\n" + c.Body + "\n}")));
         // Reparsed from text with an encoding, which debug information needs; annotations are not needed past here.
         var trees = Rewrite(bodies, Environment.GetEnvironmentVariable("UDK_MARK_STUBS") == "1")
             .Select(t => CSharpSyntaxTree.ParseText(SourceText.From(t.GetText().ToString(), System.Text.Encoding.UTF8),

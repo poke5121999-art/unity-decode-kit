@@ -977,7 +977,8 @@ def assemble(g, asm, producers, out_dir):
             if c is None:
                 continue
             if prod.startswith("manual"):
-                best[r["Key"]] = (float("inf"), {"key": r["Key"], "src": prod, "body": c["body"]})
+                best[r["Key"]] = (float("inf"), {"key": r["Key"], "src": prod, "body": c["body"],
+                                                 **({"init": c["init"]} if c.get("init") else {})})
                 continue
             f = fidelity(r["Key"], r.get("Calls") or [], nat, callees, loose_nat)
             if f == 0.0 and self_recursion(r["Key"], r.get("Calls") or [], nat.get(r["Key"]) or nat.get(nat_key(r["Key"], loose_nat) or "")):

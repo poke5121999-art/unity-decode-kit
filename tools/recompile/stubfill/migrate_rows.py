@@ -1,7 +1,7 @@
 """Turn post-build patches (methoddiff rows where the deployed body differs and is not a stub) into cand.manual rows,
 so a fresh assemble reproduces the DLL that is actually running. Helpers xplant added to the type (UdkNew*) travel as
-local functions inside the body that calls them. Constructor initializer changes (`: base(...)`) cannot ride on a
-body row; they are listed for the Cecil post-step instead.
+local functions inside the body that calls them. Constructor initializer changes (`: base(...)`) ride in the row's
+"init" field; Oracle puts it on the constructor in place of the skeleton's default-argument initializer.
 Usage: python migrate_rows.py <mdiff.jsonl> <keys.<asm>.tsv> <out cand.jsonl> <out report.tsv>"""
 import io, json, re, sys
 from pathlib import Path
@@ -93,7 +93,10 @@ def main():
             helpers[(r["type"], name)] = text
     cands, report = [], []
     for r in rows:
-        if r["kind"] != "changed" or stub(r["deployed"]):
+        if r["kind"] != "changed":
+            continue
+        # An empty constructor body looks like a stub, but its initializer may be the whole fix (base(baseWeight)).
+        if stub(r["deployed"]) and not re.search(r"\)\s*:\s*(?:base|this)\s*\(", r["deployed"].split("{", 1)[0]):
             continue
         raw = r["deployed_raw"]
         head, init, body, expr = split_member(raw)
@@ -118,6 +121,10 @@ def main():
         # Nested types: the key uses '/' after the outermost type and `N for generic arity.
         tail = f"::{name}({sig}){suffix}"
         cands_k = [k for k in keyset if k.endswith(tail) and re.sub(r"`\d+", "", k.split("::")[0].replace("/", ".")) == ns_type]
+        if len(cands_k) == 2 and re.search(r"\(\s*\S", init) and sum("`" in k for k in cands_k) == 1:
+            # Foo and Foo<T> decompile into one name here; a base call with arguments cannot target object, so the
+            # generic subclass is the one that owns it.
+            cands_k = [k for k in cands_k if "`" in k]
         if len(cands_k) != 1:
             report.append(("skip:no_key" if not cands_k else "skip:ambiguous_key", typ, f"{name}({sig})", ";".join(cands_k[:3])))
             continue
@@ -130,10 +137,12 @@ def main():
             body = body + "\n" + "\n".join(helpers[(typ, h)] for h in used)
         ours_init = re.search(r"\)\s*:\s*((?:base|this)\s*\(.*?\))\s*\{", r["ours"] or "")
         ours_init = ours_init.group(1) if ours_init else ""
+        row = {"key": key, "src": "manual", "native": "migrated from deployed pc24-release Runtime.dll 916c0695 (Cecil/xplant patch)",
+               "body": body}
         if name == ".ctor" and re.sub(r"\s+", "", init) != re.sub(r"\s+", "", ours_init):
-            report.append(("cecil:ctor_initializer", typ, key, f"ours `{ours_init}` deployed `{init}`"))
-        cands.append({"key": key, "src": "manual", "native": "migrated from deployed pc24-release Runtime.dll 916c0695 (Cecil/xplant patch)",
-                      "body": body})
+            row["init"] = init
+            report.append(("init:ctor_initializer", typ, key, f"ours `{ours_init}` deployed `{init}`"))
+        cands.append(row)
         report.append(("manual" + (":with_helpers" if used else ""), typ, key, ",".join(used)))
     with io.open(out_cand, "w", encoding="utf-8", newline="\n") as w:
         w.writelines(json.dumps(c) + "\n" for c in cands)
