@@ -959,7 +959,9 @@ def testfix(g, asm, prod, inputs, original, model="haiku", rounds=2):
 
 def assemble(g, asm, producers, out_dir):
     """Pick each method's best compiling managed body across producers (highest fidelity, later producers win ties),
-    then emit <out_dir>/<asm>.dll: the skeleton with every recovered body in it."""
+    then emit <out_dir>/<asm>.dll: the skeleton with every recovered body in it. Producers named manual* are pinned:
+    a body read from machine code by hand, or migrated from a verified deployed DLL, beats any call-count score
+    (fidelity cannot see a wrong base() argument or a null getter)."""
     nat, callees = native_index(g)
     loose_nat = loose_index(nat)
     best = {}
@@ -973,6 +975,9 @@ def assemble(g, asm, producers, out_dir):
                 continue
             c = cands.get(r["Key"]) or next((v for k, v in cands.items() if loose(k) == loose(r["Key"])), None)
             if c is None:
+                continue
+            if prod.startswith("manual"):
+                best[r["Key"]] = (float("inf"), {"key": r["Key"], "src": prod, "body": c["body"]})
                 continue
             f = fidelity(r["Key"], r.get("Calls") or [], nat, callees, loose_nat)
             if f == 0.0 and self_recursion(r["Key"], r.get("Calls") or [], nat.get(r["Key"]) or nat.get(nat_key(r["Key"], loose_nat) or "")):
