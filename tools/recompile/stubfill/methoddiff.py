@@ -6,7 +6,12 @@ import io, json, re, sys
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 
-TYPE = re.compile(r"\b(class|struct|interface|enum|record)\s+([A-Za-z_]\w*)")
+TYPE = re.compile(r"\b(class|struct|interface|enum|record)\s+([A-Za-z_]\w*)(<[^>]*>)?")
+
+
+def type_name(m):
+    """Foo and Foo<T> are different types; keep the arity the way metadata keys spell it (Foo`1)."""
+    return m.group(2) + (f"`{m.group(3).count(',') + 1}" if m.group(3) else "")
 
 
 def members(path):
@@ -23,7 +28,7 @@ def members(path):
         if stack and depth == stack[-1][1] and s and not s.startswith(("[", "//", "#")) and s not in ("{", "}"):
             m = TYPE.search(s)
             if m and "(" not in s.split(m.group(0))[0]:
-                stack.append((m.group(2), depth + 1))
+                stack.append((type_name(m), depth + 1))
                 depth += opens - closes
                 if opens == 0 and i + 1 < len(lines) and lines[i + 1].strip() == "{":
                     depth += 1
@@ -60,7 +65,7 @@ def members(path):
             if not stack and s and not s.startswith(("using", "namespace", "//", "[", "#")):
                 m = TYPE.search(s)
                 if m:
-                    stack.append((m.group(2), depth + 1))
+                    stack.append((type_name(m), depth + 1))
                     depth += opens - closes
                     if opens == 0 and i + 1 < len(lines) and lines[i + 1].strip() == "{":
                         depth += 1
@@ -86,6 +91,8 @@ def norm_header(hdr):
     attrs = sorted(a for a in attrs if not SM_ATTR.match(a + " "))
     is_async = bool(re.search(r"\basync\s", decl))
     decl = re.sub(r"\basync\s+", "", decl)
+    # One decompile writes System.Random where the other's usings let it write Random.
+    decl = re.sub(r"\bSystem\.(?=[A-Z])", "", decl)
     return " ".join(attrs + [decl]), is_async or bool(SM_ATTR.search(hdr))
 
 

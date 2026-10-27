@@ -108,7 +108,7 @@ def main():
             report.append(("skip:not_a_method", typ, r["member"][:120], ""))
             continue
         name, params = m.group(1), m.group(2)
-        simple = typ.split(".")[-1]
+        simple = re.sub(r"`[0-9]+$", "", typ.split(".")[-1])
         suffix = ""
         op = re.search(r"\b(implicit|explicit)\s+operator\s+([\w.<>\[\]?]+)\s*\(|\boperator\s*([^\s(]+)\s*\(", head)
         if op and op.group(1):
@@ -120,7 +120,7 @@ def main():
         sig = ",".join(param_type(p) for p in split_params(params))
         # Nested types: the key uses '/' after the outermost type and `N for generic arity.
         tail = f"::{name}({sig}){suffix}"
-        cands_k = [k for k in keyset if k.endswith(tail) and re.sub(r"`\d+", "", k.split("::")[0].replace("/", ".")) == ns_type]
+        cands_k = [k for k in keyset if k.endswith(tail) and k.split("::")[0].replace("/", ".") == ns_type]
         if len(cands_k) == 2 and re.search(r"\(\s*\S", init) and sum("`" in k for k in cands_k) == 1:
             # Foo and Foo<T> decompile into one name here; a base call with arguments cannot target object, so the
             # generic subclass is the one that owns it.
