@@ -131,6 +131,25 @@ Chi phí đo được với haiku là khoảng 13k token vào cộng 3k token ra
   về đường dẫn mới và bỏ dấu `~` của thư mục (Unity bỏ qua `Samples~`).
 - **Method gốc có thể lặp vô hạn với input xấu** (`CountBits(-1)` dịch phải số học). Bản dựng lại treo y như gốc,
   nên harness cần timeout cho từng call, và plugin cần danh sách `skip`.
+- **Ctor thân rỗng vẫn có thể mang fix ở initializer.** Một `.ctor()` thân rỗng mà `: base(baseWeight)` khác gốc là một
+  divergence thật (4 CustomerGoalWeightedFactory + 18 staff-job của The Walking Trade). Oracle swap thân nhưng không đụng
+  `: base(...)`; giờ Candidate có field `init` mang initializer (`Initializer()` + nhánh ConstructorDeclarationSyntax trong
+  SwapBody). Diff bỏ qua ctor rỗng là sót cả 22 cái này.
+- **Thân async viết lại kiểu sync vẫn giữ `[AsyncStateMachine]`.** 8 method The Walking Trade được xplant viết lại thành body
+  đồng bộ (await bị gỡ) nhưng attribute vẫn còn; `methoddiff` thấy attribute rồi xếp "state machine, không so được" và bỏ qua.
+  `MoveToHoldableAsync` trong số đó nằm ở luồng phục vụ: để nó là stub `throw NotImplemented` thì khách không được serve
+  (served=0) trong khi bản vá-tay chạy bình thường. Phải so chúng như body thường, không parky theo attribute.
+- **Số trong mảng tĩnh (`RuntimeHelpers.InitializeArray`) bị LLM bịa.** Ghidra chỉ thấy field handle của blob
+  `<PrivateImplementationDetails>`, nên người dịch điền placeholder (có comment tự nhận "these are placeholders"). `rvablobs.py`
+  đọc byte thật từ global-metadata.dat theo "Metadata offset" `dump.cs` in. The Walking Trade: đường cong lượng khách theo giờ
+  (`GetBlendedTimeOfDayModifier`), ngưỡng XP nhân viên (lệch 20x), hướng cầu skill-tree — đều đổi gameplay, mà fidelity chỉ-đếm-call
+  mù hoàn toàn.
+- **Getter một-câu `return this->field;` bị census bỏ sót vì guard class-init.** Native của getter field thuần nằm sau guard
+  il2cpp; census đếm "một-câu" ban đầu bỏ qua dòng guard, báo 0 stub trong khi 26 getter còn `return default` (tắt sáng vì
+  `JSkyProfile.SunLightIntensity`→0, `JDayNightCycleProfile.propertyRemap` rỗng). `trivial.py` sinh `return X;`/`X = value;`
+  deterministic trước khi gọi LLM; `folded.py` đọc offset từ mã máy (`mov reg,[rcx+off]`) khi Ghidra hiện sai tên field do gập
+  getter trùng. `ctorgap.py` bắt ctor cấp phát collection vào field mà không có thân (field `[NonSerialized]`/readonly/AddComponent
+  để null). `recovered.py`: một generator không được đếm output cũ của chính nó là "đã khôi phục" (rerun từng làm rỗng cand).
 
 ## Từ DLL tới game chạy được
 
@@ -145,6 +164,26 @@ Các bước sau áp lên project AssetRipper (`recompiled-project`) sau khi `as
 | Compute shader | `python -m udk.computeshader skel/check/install` | Dựng `.compute` từ binding + DXBC của `.asset`. `check` compile bản dịch bằng fxc rồi so disassembly với DXBC gốc. FogOfWarTextureRead 2/2 kernel giống từng lệnh |
 | Biết method nào còn thiếu khi chạy | `UDK_MARK_STUBS=1` lúc `assemble` | Mọi method chưa khôi phục ghi `[udk-stub] <key>` vào Player.log ở lần gọi đầu |
 | Chạy và chụp | `tools/recompile/unity/run-player.sh <build> <out> <giây> [game gốc]` | Đổi tên exe theo bản gốc, chép file Steam, chạy có hạn giờ; UdkProbe ghi ảnh, cây scene, exception; `UDK_PROBE_CALLS` gọi method theo lịch |
+
+## Dựng lại một DLL đã vá tay bằng pipeline
+
+Khi một DLL đang CHẠY mang fix tay (Cecil/xplant) mà pipeline chưa biết, một lần `assemble` tươi sẽ âm thầm nuốt sạch các fix đó.
+Quy trình census-driven dưới đây tái tạo đúng DLL đang chạy từ pipeline, rồi dùng chính nó làm nguồn chân lý về sau:
+
+| Bước | Lệnh | Làm gì |
+|---|---|---|
+| So member | `stubfill/methoddiff.py <asm1.dll> <deployed.dll>` | ilspycmd cả hai cây rồi so từng member. Khoá phải mang generic arity và prefix `System.` đầy đủ, nếu không `Foo<T>`/`Foo` và `Random`/`System.Random` sẽ đụng tên làm ẩn member khác |
+| Sinh row | `stubfill/migrate_rows.py` + `migrate_plan.py` | Mỗi member khác = một fix: thân deployed thành cand.manual row. 9 thân mang helper (`UdkNew*`) viết lại thành local function nên khỏi thêm member |
+| Thêm using | `stubfill/qualify_rows.py` | ilspy text của bản deployed import namespace mà skeleton không có; compile lỗi CS0246/CS0103 → thêm using từ dump.cs type→namespace, lặp tới khi sạch |
+| Ghim thắng | `assemble()` ghim `manual*` score=inf | "manual cuối" chỉ thắng TIE; một LLM body "đẹp mà sai" có thể thắng điểm fidelity một migrate row đúng. Phải ghim vô cực |
+
+**Cổng bắt buộc trước MỖI handoff: `stubfill/stubgate.py`.** Tập method còn stub của bản dựng phải là tập CON của bản tham chiếu
+(đọc từ `UdkStubLog.Hit` của cả hai cây ilspy). Nếu bản dựng stub một method mà bản gốc có code thật = một method reachable bị bỏ.
+Nó biến "playtest bắt từng stub một" thành một check tĩnh chặn cả lớp lỗi: The Walking Trade từng ra bản dựng served=0 vì
+`MoveToHoldableAsync` bị stub mà static diff bảo "chắc bằng nhau"; thêm stubgate (ta 218 stub ⊆ deployed 220, LOST 0) thì bản sau
+served=16, kinh tế chạy (429 pin), đúng số native. Đo trên The Walking Trade: 306 member khác → 306 cand.manual row + 22 ctor
+initializer qua field `init`, 9987 thân, 0 lỗi compile, mọi fix tay (steamrip, ifacefix, weapondatafix, floorfix, IsAttackSafe,
+base() initializer) đều hiện lại; chơi thử 3 ngày boot/serve/render sạch.
 
 ## Chưa làm được
 
