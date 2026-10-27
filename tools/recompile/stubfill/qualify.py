@@ -30,7 +30,7 @@ MISSING = re.compile(r"CS0(?:246|103): The (?:type or namespace )?name '(\w+)(?:
 total = fixable = 0
 for asm in asms:
     cands = {}
-    for prod in ("llm", "llmround", "llmfix"):
+    for prod in ("llm", "llmround", "llmfix", "llmclos", "llmctor"):
         try:
             for l in io.open(f"{W}/cand.{prod}.{asm}.jsonl", encoding="utf-8"):
                 r = json.loads(l)
@@ -39,12 +39,13 @@ for asm in asms:
             pass
     best_ok = set()
     try:
-        best_ok = {json.loads(l)["Key"] for l in io.open(f"{W}/res.best.{asm}.jsonl", encoding="utf-8")
-                   if json.loads(l)["Status"] == "ok"}
+        # A body recovered only through qual itself must not count, or a rerun empties cand.qual.
+        best_ok = {r["Key"] for r in map(json.loads, io.open(f"{W}/res.best.{asm}.jsonl", encoding="utf-8"))
+                   if r["Status"] == "ok" and r.get("Src") != "qual"}
     except FileNotFoundError:
         pass
     fails = {}
-    for prod in ("llm", "llmround", "llmfix"):
+    for prod in ("llm", "llmround", "llmfix", "llmclos", "llmctor"):
         try:
             for l in io.open(f"{W}/res.{prod}.{asm}.jsonl", encoding="utf-8"):
                 r = json.loads(l)
