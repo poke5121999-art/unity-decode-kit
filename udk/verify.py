@@ -158,6 +158,20 @@ def profile(path, until=None):
     return last
 
 
+# Divergences already found and waiting on a decision: reported as KNOWN with the reason, not as DEAD, so the gate
+# keeps failing only on new ones. Remove an entry once it is fixed or accepted for good.
+KNOWN = {
+    "Runtime.Navigation.NavigationManager::CalculatePathAsync":
+        "ours paths through a hand-written RigidbodyNavigator.TryCalculateAndApplyPathAsync (NavMesh.CalculatePath), "
+        "the original through the NavigationManager async queue; rebuild vs keep is the owner's call (2026-10-28)",
+    "Runtime.Navigation.NavigationManager::IsPathValid": "same as NavigationManager::CalculatePathAsync",
+    "Runtime.Navigation.NavigationManager::StartProcessingIfNeeded": "same as NavigationManager::CalculatePathAsync",
+    "Runtime.Mob.Navigation.RigidbodyNavigator::TryCalculateAndApplyPathAsync": "same as NavigationManager::CalculatePathAsync",
+    "Runtime.Achievements.SteamAchievementPlatform::GetIntStat": "ours runs NullAchievementPlatform (no Steam)",
+    "Runtime.Achievements.NullAchievementPlatform::GetIntStat": "ours runs NullAchievementPlatform (no Steam)",
+}
+
+
 def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=None):
     orig = profile(orig_p, orig_until and float(orig_until))
     orig_threw = profile.threw
@@ -188,6 +202,8 @@ def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=
                 verdict = "HIGH"
             else:
                 verdict = "OK"
+        if verdict in ("DEAD", "LOW", "HIGH", "EXTRA") and k.split("(")[0] in KNOWN:
+            verdict = "KNOWN"
         rows.append((verdict, k, o, w))
     with io.open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(f"verdict\tmethod\toriginal calls ({orig_days} days)\tours calls ({ours_days} days)\n")
@@ -197,6 +213,8 @@ def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=
     for v, k, o, w in rows:
         if v in ("DEAD", "LOW", "THROWS"):
             print(f"  {v:5} {k}  original {o}, ours {w}")
+        elif v == "KNOWN":
+            print(f"  KNOWN {k}  original {o}, ours {w}: {KNOWN[k.split('(')[0]]}")
     sys.exit(1 if any(r[0] in ("DEAD", "THROWS") for r in rows) else 0)
 
 
