@@ -11,7 +11,11 @@ outside Unity; a call profile still sees them.
       wrong MethodInfo, and the game dies with an AccessViolation in il2cpp_runtime_invoke (seen on
       SteamLeaderboardPlatform::get_IsAvailable, ZombieMobObject::AddNewGoal, SerializableGuid::op_Implicit).
 
-  python -m udk.verify diff <original methodprobe.jsonl> <original days> <ours methodprobe.jsonl> <ours days> <out.tsv>
+  python -m udk.verify hooks-types <dump.cs> <script.json> <type regex> <method regex> <out methodprobe.txt>
+      hook list: every Runtime method whose type and name match, COMDAT-folded ones left out. For walking up a
+      DEAD chain (who should have called it) one layer at a time.
+
+  python -m udk.verify diff<original methodprobe.jsonl> <original days> <ours methodprobe.jsonl> <ours days> <out.tsv>
                             [<original until s> <ours until s>]
       calls per in-game day, side by side. DEAD = the original calls it and ours never does (the served=0 class);
       LOW / HIGH = off by more than 4x; EXTRA = only ours calls it. Methods the bot forces are left out, since both
@@ -108,6 +112,18 @@ def hooks(dump, script, calls_p, gate_p, out):
           f"({unresolved} callee refs outside Runtime or unresolved) -> {out}")
 
 
+def hooks_types(dump, script, type_re, method_re, out):
+    _, methods = runtime_types(dump)
+    folded = folded_names(script)
+    lines = {f"{t}::{m}" for t, ms in methods.items() if re.search(type_re, t) for m in ms if re.search(method_re, m)}
+    dropped = {l for l in lines if l.replace("+", ".") in folded}
+    lines -= dropped
+    with io.open(out, "w", encoding="utf-8", newline="\n") as w:
+        w.write(f"# udk.verify hooks-types {type_re} {method_re}, COMDAT-folded ones left out\n")
+        w.writelines(l + "\n" for l in sorted(lines))
+    print(f"{len(lines)} hook lines, {len(dropped)} folded left out -> {out}")
+
+
 # Called directly by the autoplay bot (D:/walking-trade-ref/SCENARIO-driver.md [FORCE]); identical on both sides.
 FORCED = {
     "Runtime.Game.GameController::OnCutscenesCompleted", "Runtime.Item.ItemObject::Initialize",
@@ -177,4 +193,4 @@ def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=
 
 if __name__ == "__main__":
     cmd, *a = sys.argv[1:]
-    {"hooks": hooks, "diff": diff}[cmd](*a)
+    {"hooks": hooks, "hooks-types": hooks_types, "diff": diff}[cmd](*a)
