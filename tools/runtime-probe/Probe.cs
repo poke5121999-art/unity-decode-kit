@@ -44,6 +44,8 @@ namespace MethodProbe
             var post = typeof(Probe).GetMethod(nameof(Post), BindingFlags.Static | BindingFlags.NonPublic);
             var pre = new HarmonyMethod(typeof(Probe).GetMethod(nameof(Pre), BindingFlags.Static | BindingFlags.NonPublic));
             var postVoid = typeof(Probe).GetMethod(nameof(PostVoid), BindingFlags.Static | BindingFlags.NonPublic);
+            var postBare = typeof(Probe).GetMethod(nameof(PostBare), BindingFlags.Static | BindingFlags.NonPublic);
+            var postVoidBare = typeof(Probe).GetMethod(nameof(PostVoidBare), BindingFlags.Static | BindingFlags.NonPublic);
             foreach (var raw in File.ReadAllLines(listFile))
             {
                 var line = raw.Trim();
@@ -67,7 +69,12 @@ namespace MethodProbe
                         var isVoid = m.ReturnType == typeof(void) || isStruct(m.ReturnType);
                         var st = new Stat { Name = line + (ms.Count > 1 ? "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")" : "") };
                         Stats[m] = st; lock (All) All.Add(st);
-                        harmony.Patch(m, prefix: pre, postfix: new HarmonyMethod(isVoid ? postVoid : post));
+                        // Harmony writes __args back into ref/out parameters, so asking for __args on such a method
+                        // overwrote `out landmark` with null in LandmarkRepository.TryGetLandmark (true + null ->
+                        // IsMet NRE -> Sleep threw -> game time froze). Those methods are counted without arguments.
+                        var byRef = m.GetParameters().Any(p => p.ParameterType.IsByRef);
+                        var postfix = byRef ? (isVoid ? postVoidBare : postBare) : (isVoid ? postVoid : post);
+                        harmony.Patch(m, prefix: pre, postfix: new HarmonyMethod(postfix));
                         info("hooked " + st.Name);
                     }
                     catch (Exception e) { error("patch failed " + line + ": " + e.GetType().Name + ": " + e.Message); WriteMissing(line, "patch failed: " + e.Message); }
@@ -84,6 +91,8 @@ namespace MethodProbe
 
         static void Post(MethodBase __originalMethod, object[] __args, object __result) => Record(__originalMethod, __args, __result, true);
         static void PostVoid(MethodBase __originalMethod, object[] __args) => Record(__originalMethod, __args, null, false);
+        static void PostBare(MethodBase __originalMethod, object __result) => Record(__originalMethod, null, __result, true);
+        static void PostVoidBare(MethodBase __originalMethod) => Record(__originalMethod, null, null, false);
 
         static void Record(MethodBase m, object[] args, object result, bool hasResult)
         {
