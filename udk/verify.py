@@ -4,9 +4,12 @@ calls that ours never calls is dead behaviour (a stub, a hollow async, a pruned 
 cannot see. Most gated methods live on MonoBehaviours and touch NavMesh or transforms, so they cannot be replayed
 outside Unity; a call profile still sees them.
 
-  python -m udk.verify hooks <dump.cs> <native_calls.jsonl> <stubgate --list output> <out methodprobe.txt>
+  python -m udk.verify hooks <dump.cs> <script.json> <native_calls.jsonl> <stubgate --list output> <out methodprobe.txt>
       hook list: each gated method plus the Runtime methods its native code calls (one level), async state
-      machines folded onto the method that owns them."""
+      machines folded onto the method that owns them. Methods whose native body is COMDAT-folded with another
+      method are left out: Harmony detours the shared address, the other method then enters the patch with the
+      wrong MethodInfo, and the game dies with an AccessViolation in il2cpp_runtime_invoke (seen on
+      SteamLeaderboardPlatform::get_IsAvailable, ZombieMobObject::AddNewGoal, SerializableGuid::op_Implicit)."""
 import io, json, re, sys
 from collections import defaultdict
 sys.stdout.reconfigure(encoding="utf-8")
@@ -59,8 +62,18 @@ def owner(key):
     return None if meth.startswith((".", "<")) or meth in ("ctor", "cctor") else "+".join(outer) + "::" + meth
 
 
-def hooks(dump, calls_p, gate_p, out):
+def folded_names(script):
+    """MethodProbe lines, dotted ("Ns.Type.Inner::M"), with at least one overload sharing its native address."""
+    sj = json.load(io.open(script, encoding="utf-8"))
+    count = defaultdict(int)
+    for m in sj["ScriptMethod"]:
+        count[m["Address"]] += 1
+    return {m["Name"].replace("$$", "::") for m in sj["ScriptMethod"] if count[m["Address"]] > 1}
+
+
+def hooks(dump, script, calls_p, gate_p, out):
     by_short, methods = runtime_types(dump)
+    folded = folded_names(script)
     gate = [l.strip()[5:].replace("HOLLOW ", "") for l in io.open(gate_p, encoding="utf-8") if l.strip().startswith("STUB ")]
     native = defaultdict(list)
     for l in io.open(calls_p, encoding="utf-8"):
@@ -79,10 +92,14 @@ def hooks(dump, calls_p, gate_p, out):
                     full = [f for f in by_short.get(t, ()) if m in methods.get(f, ())]
                     unresolved += not full
                     lines.update(f"{f}::{m}" for f in full)
+    dropped = {l for l in lines if l.replace("+", ".") in folded}
+    lines -= dropped
     with io.open(out, "w", encoding="utf-8", newline="\n") as w:
-        w.write("# udk.verify hooks: gated methods + Runtime callees (one level)\n")
+        w.write("# udk.verify hooks: gated methods + Runtime callees (one level), COMDAT-folded ones left out\n")
         w.writelines(l + "\n" for l in sorted(lines))
-    print(f"{len(gate)} gated keys -> {len(lines)} hook lines ({unresolved} callee refs outside Runtime or unresolved) -> {out}")
+        w.writelines(f"# folded: {l}\n" for l in sorted(dropped))
+    print(f"{len(gate)} gated keys -> {len(lines)} hook lines, {len(dropped)} folded left out "
+          f"({unresolved} callee refs outside Runtime or unresolved) -> {out}")
 
 
 if __name__ == "__main__":

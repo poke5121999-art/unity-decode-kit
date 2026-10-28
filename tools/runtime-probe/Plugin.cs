@@ -67,9 +67,6 @@ namespace MethodProbe
                 if (ms.Count == 0) { Log.LogWarning("method not found: " + line); WriteMissing(line, "method not found"); continue; }
                 foreach (var m in ms)
                 {
-                    // Detouring a method that takes an IL2CPP struct by value (or lives on one) crashed the game inside
-                    // il2cpp_runtime_invoke (SerializableGuid::op_Implicit), so such methods are counted as unhooked.
-                    if (StructSig(m)) { Log.LogWarning("skipped (struct signature): " + line); WriteMissing(line, "skipped: struct signature"); continue; }
                     try
                     {
                         // A struct return (UniTask) is hooked without __result; boxing it is the untested part.
@@ -89,9 +86,6 @@ namespace MethodProbe
 
         static bool IsStruct(Type t) => t != typeof(void) && !t.IsPrimitive && !t.IsEnum
             && (t.IsValueType || typeof(Il2CppSystem.ValueType).IsAssignableFrom(t));
-
-        static bool StructSig(MethodInfo m) => IsStruct(m.DeclaringType)
-            || m.GetParameters().Any(p => IsStruct(p.ParameterType.IsByRef ? p.ParameterType.GetElementType() : p.ParameterType));
 
         static string invIn, invOut; static double invDelay; static DateTime invStart; static int invDone;
 
