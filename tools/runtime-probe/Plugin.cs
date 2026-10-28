@@ -21,6 +21,7 @@ namespace MethodProbe
         static string OutPath;
         static int MaxSamples = 5;
         static readonly object FileLock = new();
+        static readonly DateTime Loaded = DateTime.UtcNow;
 
         class Stat
         {
@@ -66,9 +67,13 @@ namespace MethodProbe
                 if (ms.Count == 0) { Log.LogWarning("method not found: " + line); WriteMissing(line, "method not found"); continue; }
                 foreach (var m in ms)
                 {
+                    // Detouring a method that takes an IL2CPP struct by value (or lives on one) crashed the game inside
+                    // il2cpp_runtime_invoke (SerializableGuid::op_Implicit), so such methods are counted as unhooked.
+                    if (StructSig(m)) { Log.LogWarning("skipped (struct signature): " + line); WriteMissing(line, "skipped: struct signature"); continue; }
                     try
                     {
-                        var isVoid = m.ReturnType == typeof(void);
+                        // A struct return (UniTask) is hooked without __result; boxing it is the untested part.
+                        var isVoid = m.ReturnType == typeof(void) || IsStruct(m.ReturnType);
                         var st = new Stat { Name = line + (ms.Count > 1 ? "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")" : "") };
                         Stats[m] = st; lock (All) All.Add(st);
                         harmony.Patch(m, postfix: new HarmonyMethod(isVoid ? postVoid : post));
@@ -79,8 +84,14 @@ namespace MethodProbe
             }
             var th = new Thread(() => { while (true) { Thread.Sleep(Math.Max(1, flushCfg.Value) * 1000); Flush(); } }) { IsBackground = true };
             th.Start();
-            AppDomain.CurrentDomain.ProcessExit += (s, e) => Flush();
+            AppDomain.CurrentDomain.ProcessExit += OnExit;
         }
+
+        static bool IsStruct(Type t) => t != typeof(void) && !t.IsPrimitive && !t.IsEnum
+            && (t.IsValueType || typeof(Il2CppSystem.ValueType).IsAssignableFrom(t));
+
+        static bool StructSig(MethodInfo m) => IsStruct(m.DeclaringType)
+            || m.GetParameters().Any(p => IsStruct(p.ParameterType.IsByRef ? p.ParameterType.GetElementType() : p.ParameterType));
 
         static string invIn, invOut; static double invDelay; static DateTime invStart; static int invDone;
 
@@ -90,7 +101,14 @@ namespace MethodProbe
             invOut = Config.Bind("Invoke", "OutputFile", Path.Combine(Paths.BepInExRootPath, "methodprobe-invoke-out.jsonl"), "Invoke results JSONL.").Value;
             invDelay = Config.Bind("Invoke", "DelaySeconds", 10, "Seconds after plugin load before invoking.").Value;
             var trig = Config.Bind("Invoke", "TriggerMethod", "", "Optional Type::Method (instance or static, called every frame/regularly on the main thread); the first call after the delay runs the invocations there. Empty = run on a background thread after the delay.").Value;
-            if (!File.Exists(invIn)) return;
+            var scen = Config.Bind("Scenario", "Mode", "", "Empty = off; newgame = start a new game from the main menu, then idle; autoplay = newgame plus the UdkAutoPlay day loop (needs Invoke.TriggerMethod).").Value;
+            Scenario.Setup(scen,
+                Config.Bind("Scenario", "MenuType", "Runtime.Menu.MenuController", "Menu MonoBehaviour whose OnSaveSelected(int) / OnSaveCreated() start a new game.").Value,
+                Config.Bind("Scenario", "Slot", 2, "Save slot the scenario creates.").Value,
+                Config.Bind("Scenario", "DelaySeconds", 20, "Seconds after plugin load before pressing New Game.").Value,
+                Config.Bind("Scenario", "Days", 3, "autoplay: in-game days to play.").Value,
+                Config.Bind("Scenario", "LogFile", Path.Combine(Paths.BepInExRootPath, "scenario.log"), "Scenario progress, one line per step.").Value, Log);
+            if (!File.Exists(invIn) && scen.Length == 0) return;
             invStart = DateTime.UtcNow;
             if (string.IsNullOrWhiteSpace(trig))
             {
@@ -106,7 +124,13 @@ namespace MethodProbe
             Log.LogInfo("invoke mode armed on " + trig + " after " + invDelay + " s");
         }
 
-        static void Tick() { if (invDone == 0 && (DateTime.UtcNow - invStart).TotalSeconds >= invDelay) Self.Log.LogInfo("tick fired"); if ((DateTime.UtcNow - invStart).TotalSeconds >= invDelay) RunInvoke(); }
+        static void Tick()
+        {
+            Scenario.Tick();
+            if (!File.Exists(invIn) || (DateTime.UtcNow - invStart).TotalSeconds < invDelay) return;
+            if (invDone == 0) Self.Log.LogInfo("tick fired");
+            RunInvoke();
+        }
 
         static void RunInvoke()
         {
@@ -165,6 +189,8 @@ namespace MethodProbe
             lock (FileLock) File.AppendAllText(OutPath, "{\"method\":" + Q(m) + ",\"error\":" + Q(why) + "}\n");
         }
 
+        static void OnExit(object s, EventArgs e) => Flush();
+
         static void Flush()
         {
             try
@@ -177,7 +203,7 @@ namespace MethodProbe
                     if (c == st.LastFlushed) continue;
                     st.LastFlushed = c;
                     string[] samples; lock (st) samples = st.Samples.ToArray();
-                    sb.Append("{\"method\":").Append(Q(st.Name)).Append(",\"calls\":").Append(c)
+                    sb.Append("{\"method\":").Append(Q(st.Name)).Append(",\"calls\":").Append(c).Append(",\"t\":").Append((long)(DateTime.UtcNow - Loaded).TotalSeconds)
                       .Append(",\"samples\":[").Append(string.Join(",", samples)).Append("]}\n");
                 }
                 if (sb.Length > 0) lock (FileLock) File.AppendAllText(OutPath, sb.ToString());
