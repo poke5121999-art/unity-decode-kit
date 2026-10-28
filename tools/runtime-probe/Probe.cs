@@ -26,6 +26,9 @@ namespace MethodProbe
         {
             public string Name;
             public long Calls;
+            // A postfix does not run when the method throws, so entered - calls = calls that ended in an exception
+            // (TimeManager.Sleep counted 0 while every night it threw from a DayPassed handler).
+            public long Entered;
             public long LastFlushed = -1;
             public List<string> Samples = new List<string>();
         }
@@ -39,6 +42,7 @@ namespace MethodProbe
             var asms = AppDomain.CurrentDomain.GetAssemblies();
             var harmony = new Harmony("local.methodprobe");
             var post = typeof(Probe).GetMethod(nameof(Post), BindingFlags.Static | BindingFlags.NonPublic);
+            var pre = new HarmonyMethod(typeof(Probe).GetMethod(nameof(Pre), BindingFlags.Static | BindingFlags.NonPublic));
             var postVoid = typeof(Probe).GetMethod(nameof(PostVoid), BindingFlags.Static | BindingFlags.NonPublic);
             foreach (var raw in File.ReadAllLines(listFile))
             {
@@ -63,7 +67,7 @@ namespace MethodProbe
                         var isVoid = m.ReturnType == typeof(void) || isStruct(m.ReturnType);
                         var st = new Stat { Name = line + (ms.Count > 1 ? "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")" : "") };
                         Stats[m] = st; lock (All) All.Add(st);
-                        harmony.Patch(m, postfix: new HarmonyMethod(isVoid ? postVoid : post));
+                        harmony.Patch(m, prefix: pre, postfix: new HarmonyMethod(isVoid ? postVoid : post));
                         info("hooked " + st.Name);
                     }
                     catch (Exception e) { error("patch failed " + line + ": " + e.GetType().Name + ": " + e.Message); WriteMissing(line, "patch failed: " + e.Message); }
@@ -71,6 +75,11 @@ namespace MethodProbe
             }
             new Thread(() => { while (true) { Thread.Sleep(Math.Max(1, flushSeconds) * 1000); Flush(); } }) { IsBackground = true }.Start();
             AppDomain.CurrentDomain.ProcessExit += OnExit;
+        }
+
+        static void Pre(MethodBase __originalMethod)
+        {
+            if (Stats.TryGetValue(__originalMethod, out var st)) Interlocked.Increment(ref st.Entered);
         }
 
         static void Post(MethodBase __originalMethod, object[] __args, object __result) => Record(__originalMethod, __args, __result, true);
@@ -134,10 +143,11 @@ namespace MethodProbe
                 foreach (var st in snap)
                 {
                     var c = Interlocked.Read(ref st.Calls);
-                    if (c == st.LastFlushed) continue;
-                    st.LastFlushed = c;
+                    var e = Interlocked.Read(ref st.Entered);
+                    if (c + e == st.LastFlushed) continue;
+                    st.LastFlushed = c + e;
                     string[] samples; lock (st) samples = st.Samples.ToArray();
-                    sb.Append("{\"method\":").Append(Q(st.Name)).Append(",\"calls\":").Append(c).Append(",\"t\":").Append((long)(DateTime.UtcNow - Loaded).TotalSeconds)
+                    sb.Append("{\"method\":").Append(Q(st.Name)).Append(",\"calls\":").Append(c).Append(",\"entered\":").Append(e).Append(",\"t\":").Append((long)(DateTime.UtcNow - Loaded).TotalSeconds)
                       .Append(",\"samples\":[").Append(string.Join(",", samples)).Append("]}\n");
                 }
                 if (sb.Length > 0) lock (FileLock) File.AppendAllText(OutPath, sb.ToString());

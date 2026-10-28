@@ -18,7 +18,8 @@ outside Unity; a call profile still sees them.
   python -m udk.verify diff<original methodprobe.jsonl> <original days> <ours methodprobe.jsonl> <ours days> <out.tsv>
                             [<original until s> <ours until s>]
       calls per in-game day, side by side. DEAD = the original calls it and ours never does (the served=0 class);
-      LOW / HIGH = off by more than 4x; EXTRA = only ours calls it. Methods the bot forces are left out, since both
+      LOW / HIGH = off by more than 4x; EXTRA = only ours calls it; THROWS = more calls end in an exception in
+      ours (columns are then exception counts). Methods the bot forces are left out, since both
       sides call them because the bot does. Exit 1 when anything is DEAD."""
 import io, json, re, sys
 from collections import defaultdict
@@ -141,28 +142,36 @@ FORCED = {
 def profile(path, until=None):
     """{method line: calls}, from the last record per method (records are cumulative). until: seconds since load;
     the original keeps running after the bot finishes while ours quits, so both are cut at the bot's end."""
-    last = {}
+    last, threw = {}, {}
     for l in io.open(path, encoding="utf-8"):
         r = json.loads(l)
         if "calls" in r:
             if until is None or r["t"] <= until:
                 last[r["method"]] = r["calls"]
+                # entered - returned: calls that ended in an exception (a postfix never sees those)
+                threw[r["method"]] = r.get("entered", r["calls"]) - r["calls"]
             else:
                 last.setdefault(r["method"], 0)
         elif "error" in r:
             last.setdefault(r["method"], None)
+    profile.threw = threw
     return last
 
 
 def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=None):
     orig = profile(orig_p, orig_until and float(orig_until))
+    orig_threw = profile.threw
     ours = profile(ours_p, ours_until and float(ours_until))
+    ours_threw = profile.threw
     od, wd = float(orig_days), float(ours_days)
     rows = []
     for k in sorted(set(orig) | set(ours)):
         if k.split("(")[0] in FORCED:
             continue
         o, w = orig.get(k), ours.get(k)
+        if ours_threw.get(k, 0) > orig_threw.get(k, 0):
+            rows.append(("THROWS", k, orig_threw.get(k, 0), ours_threw.get(k, 0)))
+            continue
         if o is None or w is None:
             verdict = "UNHOOKED"  # missing or not patchable on one side: no evidence either way
         else:
@@ -186,9 +195,9 @@ def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=
     from collections import Counter
     print(", ".join(f"{k}={n}" for k, n in sorted(Counter(r[0] for r in rows).items())) + f" -> {out}")
     for v, k, o, w in rows:
-        if v in ("DEAD", "LOW"):
+        if v in ("DEAD", "LOW", "THROWS"):
             print(f"  {v:5} {k}  original {o}, ours {w}")
-    sys.exit(1 if any(r[0] == "DEAD" for r in rows) else 0)
+    sys.exit(1 if any(r[0] in ("DEAD", "THROWS") for r in rows) else 0)
 
 
 if __name__ == "__main__":
