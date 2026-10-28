@@ -10,6 +10,7 @@
     <GameDir Condition="'$(GameDir)'==''">D:\walking-trade-ref\runtime\game</GameDir>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="mono/**" />
     <Reference Include="BepInEx.Core"><HintPath>$(GameDir)\BepInEx\core\BepInEx.Core.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(GameDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>

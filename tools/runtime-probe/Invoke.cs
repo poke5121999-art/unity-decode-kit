@@ -36,7 +36,7 @@ namespace MethodProbe
                     key = root.GetProperty("key").GetString();
                     var ps = root.GetProperty("params").EnumerateArray().Select(e => Canon(e.GetString())).ToArray();
                     var m = Resolve(key, ps); log.LogInfo("resolved " + key + " -> " + (m != null));
-                    if (m == null) { sb.AppendLine("{\"key\":" + Plugin.Q(key) + ",\"error\":\"resolve failed: no static method with these parameter types\"}"); err++; continue; }
+                    if (m == null) { sb.AppendLine("{\"key\":" + Probe.Q(key) + ",\"error\":\"resolve failed: no static method with these parameter types\"}"); err++; continue; }
                     resolved++;
                     var skip = new HashSet<string>();
                     if (root.TryGetProperty("skip", out var sk))
@@ -45,7 +45,7 @@ namespace MethodProbe
                     {
                         if (skip.Contains(Norm(argset)))
                         {
-                            sb.AppendLine("{\"key\":" + Plugin.Q(key) + ",\"args\":" + argset.GetRawText() + ",\"ret\":\"timeout\"}");
+                            sb.AppendLine("{\"key\":" + Probe.Q(key) + ",\"args\":" + argset.GetRawText() + ",\"ret\":\"timeout\"}");
                             continue;
                         }
                         var vals = argset.EnumerateArray().ToArray();
@@ -56,20 +56,20 @@ namespace MethodProbe
                             var pi = m.GetParameters();
                             for (int i = 0; i < ps.Length; i++) objs[i] = Conv(vals[i], pi[i].ParameterType);
                             var r = m.Invoke(null, objs);
-                            sb.AppendLine("{\"key\":" + Plugin.Q(key) + ",\"args\":" + argsJson + ",\"ret\":" + Fmt(r) + "}");
+                            sb.AppendLine("{\"key\":" + Probe.Q(key) + ",\"args\":" + argsJson + ",\"ret\":" + Fmt(r) + "}");
                             ok++;
                         }
                         catch (Exception e)
                         {
                             var ie = e is TargetInvocationException && e.InnerException != null ? e.InnerException : e;
-                            sb.AppendLine("{\"key\":" + Plugin.Q(key) + ",\"args\":" + argsJson + ",\"error\":" + Plugin.Q(ie.GetType().Name + ": " + ie.Message) + "}");
+                            sb.AppendLine("{\"key\":" + Probe.Q(key) + ",\"args\":" + argsJson + ",\"error\":" + Probe.Q(ie.GetType().Name + ": " + ie.Message) + "}");
                             err++;
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    sb.AppendLine("{\"key\":" + Plugin.Q(key) + ",\"error\":" + Plugin.Q(e.GetType().Name + ": " + e.Message) + "}");
+                    sb.AppendLine("{\"key\":" + Probe.Q(key) + ",\"error\":" + Probe.Q(e.GetType().Name + ": " + e.Message) + "}");
                     err++;
                 }
             }
@@ -118,11 +118,11 @@ namespace MethodProbe
         {
             if (r == null) return "null";
             if (r is bool b) return b ? "true" : "false";
-            if (r is float f) return float.IsFinite(f) ? f.ToString("R", CultureInfo.InvariantCulture) : Plugin.Q(f.ToString(CultureInfo.InvariantCulture));
-            if (r is double d) return double.IsFinite(d) ? d.ToString("R", CultureInfo.InvariantCulture) : Plugin.Q(d.ToString(CultureInfo.InvariantCulture));
-            if (r is string s) return Plugin.Q(s);
+            if (r is float f) return float.IsFinite(f) ? f.ToString("R", CultureInfo.InvariantCulture) : Probe.Q(f.ToString(CultureInfo.InvariantCulture));
+            if (r is double d) return double.IsFinite(d) ? d.ToString("R", CultureInfo.InvariantCulture) : Probe.Q(d.ToString(CultureInfo.InvariantCulture));
+            if (r is string s) return Probe.Q(s);
             if (r.GetType().IsPrimitive) return Convert.ToString(r, CultureInfo.InvariantCulture);
-            return Plugin.Q("<" + r.GetType().FullName + ">");
+            return Probe.Q("<" + r.GetType().FullName + ">");
         }
     }
 }

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- BepInEx 5 (Mono) build of the same call counter, for our recompiled build; the IL2CPP build is ../MethodProbe.csproj. -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>MethodProbeMono</AssemblyName>
+    <RootNamespace>MethodProbe</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <!-- Game dir with BepInEx 5 installed. Override: dotnet build -p:GameDir=... -->
+    <GameDir Condition="'$(GameDir)'==''">D:\walking-trade-ref\runtime\pc24-verify</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Probe.cs" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="BepInEx"><HintPath>$(GameDir)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(GameDir)\The Walking Trade_Data\Managed\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameDir)\The Walking Trade_Data\Managed\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(GameDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

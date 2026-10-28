@@ -9,7 +9,13 @@ outside Unity; a call profile still sees them.
       machines folded onto the method that owns them. Methods whose native body is COMDAT-folded with another
       method are left out: Harmony detours the shared address, the other method then enters the patch with the
       wrong MethodInfo, and the game dies with an AccessViolation in il2cpp_runtime_invoke (seen on
-      SteamLeaderboardPlatform::get_IsAvailable, ZombieMobObject::AddNewGoal, SerializableGuid::op_Implicit)."""
+      SteamLeaderboardPlatform::get_IsAvailable, ZombieMobObject::AddNewGoal, SerializableGuid::op_Implicit).
+
+  python -m udk.verify diff <original methodprobe.jsonl> <original days> <ours methodprobe.jsonl> <ours days> <out.tsv>
+                            [<original until s> <ours until s>]
+      calls per in-game day, side by side. DEAD = the original calls it and ours never does (the served=0 class);
+      LOW / HIGH = off by more than 4x; EXTRA = only ours calls it. Methods the bot forces are left out, since both
+      sides call them because the bot does. Exit 1 when anything is DEAD."""
 import io, json, re, sys
 from collections import defaultdict
 sys.stdout.reconfigure(encoding="utf-8")
@@ -102,6 +108,73 @@ def hooks(dump, script, calls_p, gate_p, out):
           f"({unresolved} callee refs outside Runtime or unresolved) -> {out}")
 
 
+# Called directly by the autoplay bot (D:/walking-trade-ref/SCENARIO-driver.md [FORCE]); identical on both sides.
+FORCED = {
+    "Runtime.Game.GameController::OnCutscenesCompleted", "Runtime.Item.ItemObject::Initialize",
+    "Runtime.Item.Shelving.ShelfObject::TryPlaceShelvable", "Runtime.Item.ItemObject::ApplyChangesToShopGrid",
+    "Runtime.Game.StoreManager::TryToggleStoreOpen", "Runtime.Events.CustomerEventsManager::SpawnCustomerAtRandomPoint",
+    "Runtime.Player.CheckoutCurrencyObject::SetValidity", "Runtime.Player.StashCheckoutCurrencyDepot::TryDeposit",
+    "Runtime.Item.CheckoutObject::Interact", "Runtime.Player.States.ServingPlayerState::OnViewAccepted",
+    "Runtime.Player.States.ServingPlayerState::StopServing", "Runtime.Day.TimeManager::SetTime",
+    "Runtime.Game.StoreManager::CloseStore", "Runtime.Item.BedObject::Interact",
+    "Runtime.Player.States.SleepingPlayerState::SleepViewCompleted", "Runtime.Day.TimeManager::Sleep",
+    "Runtime.Menu.MenuController::OnSaveCreated", "Runtime.Menu.MenuController::OnSaveSelected",
+}
+
+
+def profile(path, until=None):
+    """{method line: calls}, from the last record per method (records are cumulative). until: seconds since load;
+    the original keeps running after the bot finishes while ours quits, so both are cut at the bot's end."""
+    last = {}
+    for l in io.open(path, encoding="utf-8"):
+        r = json.loads(l)
+        if "calls" in r:
+            if until is None or r["t"] <= until:
+                last[r["method"]] = r["calls"]
+            else:
+                last.setdefault(r["method"], 0)
+        elif "error" in r:
+            last.setdefault(r["method"], None)
+    return last
+
+
+def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=None):
+    orig = profile(orig_p, orig_until and float(orig_until))
+    ours = profile(ours_p, ours_until and float(ours_until))
+    od, wd = float(orig_days), float(ours_days)
+    rows = []
+    for k in sorted(set(orig) | set(ours)):
+        if k.split("(")[0] in FORCED:
+            continue
+        o, w = orig.get(k), ours.get(k)
+        if o is None or w is None:
+            verdict = "UNHOOKED"  # missing or not patchable on one side: no evidence either way
+        else:
+            o_rate, w_rate = o / od, w / wd
+            if o == 0 and w == 0:
+                verdict = "SILENT"
+            elif w == 0:
+                verdict = "DEAD"
+            elif o == 0:
+                verdict = "EXTRA"
+            elif w_rate * 4 < o_rate:
+                verdict = "LOW"
+            elif w_rate > o_rate * 4:
+                verdict = "HIGH"
+            else:
+                verdict = "OK"
+        rows.append((verdict, k, o, w))
+    with io.open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(f"verdict\tmethod\toriginal calls ({orig_days} days)\tours calls ({ours_days} days)\n")
+        f.writelines(f"{v}\t{k}\t{o}\t{w}\n" for v, k, o, w in sorted(rows))
+    from collections import Counter
+    print(", ".join(f"{k}={n}" for k, n in sorted(Counter(r[0] for r in rows).items())) + f" -> {out}")
+    for v, k, o, w in rows:
+        if v in ("DEAD", "LOW"):
+            print(f"  {v:5} {k}  original {o}, ours {w}")
+    sys.exit(1 if any(r[0] == "DEAD" for r in rows) else 0)
+
+
 if __name__ == "__main__":
     cmd, *a = sys.argv[1:]
-    {"hooks": hooks}[cmd](*a)
+    {"hooks": hooks, "diff": diff}[cmd](*a)
