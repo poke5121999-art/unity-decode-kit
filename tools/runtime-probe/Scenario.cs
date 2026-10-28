@@ -104,9 +104,13 @@ namespace MethodProbe
                 if (m == null) continue;
                 // An interop parameter typed as an interface (IReadOnlyList<T>) does not accept the concrete wrapper;
                 // rewrap the same IL2CPP object as the parameter type.
+                // A null for a boxed value-type wrapper (Il2CppSystem.Nullable<Guid> in ItemObject.Initialize) is unboxed
+                // by interop and throws NullReferenceException before the game runs; pass the default value instead.
                 var ps = m.GetParameters();
                 var args = a.Select((x, i) => x is Il2CppObjectBase w && !ps[i].ParameterType.IsInstanceOfType(x)
-                    ? Activator.CreateInstance(ps[i].ParameterType, w.Pointer) : x).ToArray();
+                    ? Activator.CreateInstance(ps[i].ParameterType, w.Pointer)
+                    : x == null && typeof(Il2CppSystem.ValueType).IsAssignableFrom(ps[i].ParameterType)
+                        ? Activator.CreateInstance(ps[i].ParameterType) : x).ToArray();
                 return m.Invoke(o, args);
             }
             throw new MissingMethodException(o.GetType().Name + "." + name);
@@ -245,6 +249,8 @@ namespace MethodProbe
 
         // One pass of the serve loop: pay what lies on the counter, start serving a queued customer, and return the
         // ServingPlayerState whose offer is open (the caller accepts it, waits, then stops serving).
+        static DateTime lastServeLog;
+
         static object ServeStep(Component pc)
         {
             Pay();
@@ -254,10 +260,18 @@ namespace MethodProbe
             // modified" through interop; its backing _queue has the count.
             int q = Convert.ToInt32(Get(Get(co, "_queue"), "Count") ?? 0);
             var cur = Get(Get(controller, "StateController"), "CurrentState");
-            bool serving = cur != null && cur.ToString().Contains("ServingPlayerState");
+            // An interop wrapper's ToString may not name the IL2CPP class, so ask the runtime for it.
+            var curName = cur is Il2CppObjectBase cw ? cw.Cast<Il2CppSystem.Object>().GetIl2CppType().FullName : "" + cur;
+            bool serving = curName.Contains("ServingPlayerState");
             if (q > 0 && !serving) Interact(co);
             var sp = FindAll("Runtime.Player.States.ServingPlayerState", true).FirstOrDefault();
-            return serving && sp != null && Get(sp, "_currentOffer") != null ? sp : null;
+            var offer = sp == null ? null : Get(sp, "_currentOffer");
+            if ((DateTime.UtcNow - lastServeLog).TotalSeconds >= 5)
+            {
+                lastServeLog = DateTime.UtcNow;
+                L($"serve q={q} state={curName} sp={(sp != null)} offer={(offer != null)}");
+            }
+            return serving && offer != null ? sp : null;
         }
 
         static void Stock()
