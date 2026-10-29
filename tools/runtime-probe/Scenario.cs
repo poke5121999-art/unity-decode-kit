@@ -270,8 +270,28 @@ namespace MethodProbe
             {
                 lastServeLog = DateTime.UtcNow;
                 L($"serve q={q} state={curName} sp={(sp != null)} offer={(offer != null)}");
+                NavLog();
             }
             return serving && offer != null ? sp : null;
+        }
+
+        // Where every mob navigator is and what it is doing, so a customer that never reaches its shelf tile shows why
+        // (no path, path stuck at a corner, unreachable, kinematic body, zero velocity).
+        static void NavLog()
+        {
+            foreach (var n in FindAll("Runtime.Mob.Navigation.RigidbodyNavigator"))
+                Safe(() =>
+                {
+                    var c = Comp(n);
+                    var rb = c.GetComponent<Rigidbody>();
+                    var path = Get(n, "_currentPath");
+                    int corners = path == null ? -1 : Convert.ToInt32(Get(path, "Count"));
+                    L($"  nav {c.gameObject.name} pos={c.transform.position:F1} dest={Get(n, "DestinationPosition"):F1} " +
+                      $"hasDest={Get(n, "_hasDestination")} calc={Get(n, "IsCalculatingPath")} unreach={Get(n, "IsDestinationUnreachable")} " +
+                      $"path={Get(n, "_currentPathIndex")}/{corners} v={Get(n, "_currentVelocity"):F2} stuck={Get(n, "StuckTime"):F1} " +
+                      $"kin={rb?.isKinematic} rbv={rb?.linearVelocity.magnitude:F2}");
+                    return true;
+                }, "NavLog");
         }
 
         static void Stock()
