@@ -33,6 +33,8 @@ literals. Reading a continuation:
 - `mov dword [sm], 0xfffffffe` then a builder `SetResult` call means `return`.
 - A store of a constant into the result slot means `result = <enum value>`.
 - Getting the saved exception and calling the raise helper means `throw;`.
+- An empty continuation list means the funclet returns the continuation itself: `lea rax, [rip+X]` before its
+  `ret` gives one address per matched type (`SetDestinationCore`, va `182467FD0`).
 - Exception `get_Message` is vtable slot 5 (`[klass+0x188]`), and `get_StackTrace` is slot 9 (`+0x1c8`).
 
 ## fh4.py
