@@ -248,8 +248,16 @@ def prep(g):
     lits = {}
     pat = re.compile(r'"name": "(StringLiteral_[^"]*)",\s*"string": "((?:[^"\\]|\\.)*)"')
     buf = (g.dump / "inspector" / "metadata.json").read_text(encoding="utf-8")
+    collide = defaultdict(set)
     for m in pat.finditer(buf):
         lits[m.group(1)] = json.loads('"' + m.group(2) + '"')
+        collide[m.group(1)].add(lits[m.group(1)])
+    collide = {k: v for k, v in collide.items() if len(v) > 1}
+    if collide:
+        # Ghidra's C names a literal, not its address, so these names cannot be told apart from the decompile;
+        # tools/literals/litfix repairs the recompiled methods afterwards from the machine code.
+        print(f"strings.tsv: {len(collide)} StringLiteral_ names stand for {sum(map(len, collide.values()))} different strings; "
+              f"only the last of each is kept (see tools/literals/README.md)")
     with open(g.p("strings.tsv"), "w", encoding="utf-8") as f:
         for k, v in lits.items():
             f.write(k + "\t" + json.dumps(v, ensure_ascii=False) + "\n")

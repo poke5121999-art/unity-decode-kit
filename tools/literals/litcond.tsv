@@ -1,0 +1,4 @@
+# @0x18249AEE3: cmp ebp(currentZone),1; cmove picks _outside, else _inside.
+Runtime.Mob.Customer.CustomerMobObject$$OnDied	"gameplay_notification_customer_died_outside"	local==1:get_CurrentZone	"gameplay_notification_customer_died_outside"	"gameplay_notification_customer_died_inside"
+# @0x1825B2B40: test edi(amount),edi; jle -> "", else "+".
+Runtime.UI.WorldCurrencyTextView$$Initialize	" "	arg>0:2	"+"	""
