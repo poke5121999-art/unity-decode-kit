@@ -174,14 +174,34 @@ namespace MethodProbe
             object menu = null;
             for (int i = 0; i < 60 && menu == null; i++) { menu = FindAll(menuType).FirstOrDefault(); if (menu == null) yield return 1; }
             if (menu == null) { L("menu not found: " + menuType); yield break; }
+            if (mode == "saveload-b")
+            {
+                // Continue the slot phase A saved, through the menu's own "load existing save" path.
+                Call(menu, "OnExistingSaveSelected", slot);
+                L("existing save requested, slot " + slot);
+                var b = SaveLoad(false);
+                while (b.MoveNext()) yield return b.Current;
+                yield break;
+            }
             Call(menu, "OnSaveSelected", slot);
             yield return 3;
+            // Our side starts with NewGameData.SkipIntro = true (UdkNewGame). Without it the original plays the
+            // tutorial path, the shop's main door stays shut and every customer stops at it (served 0).
+            var skipIntro = Get(Get(menu, "_newSaveView"), "_skipIntroView");
+            if (skipIntro == null) L("_skipIntroView not found; intro not skipped");
+            else { Safe(() => Call(skipIntro, "SetData", true), "SkipIntro"); L("skip intro on"); }
             Call(menu, "OnSaveCreated");
             L("new game requested, slot " + slot);
             if (mode == "features")
             {
                 var f = Features();
                 while (f.MoveNext()) yield return f.Current;
+                yield break;
+            }
+            if (mode == "saveload-a")
+            {
+                var a = SaveLoad(true);
+                while (a.MoveNext()) yield return a.Current;
                 yield break;
             }
             if (mode != "autoplay") yield break;
@@ -302,6 +322,78 @@ namespace MethodProbe
             L("features: zombies spawned");
             yield return 40;
             L("features done");
+        }
+
+        // Save/load round trip, in two processes like a player who quits and continues. Phase A (fresh): new game,
+        // two skill level-ups and two hired staff, then the game's own end-of-day save (SaveGameCoroutine) into the
+        // scenario slot. Phase B: the menu loads that slot, and the same save runs again, so the slot's snapshot
+        // ring holds the state before and after a load; diffing their entries shows what the load lost.
+        static IEnumerator<double> SaveLoad(bool fresh)
+        {
+            object player = null;
+            for (int i = 0; i < 120 && player == null; i++)
+            {
+                player = FindAll("Runtime.Player.Movement.DefaultPlayerMovementProvider", true).FirstOrDefault();
+                if (player == null) yield return 1;
+            }
+            if (player == null) { L("gave up finding player"); yield break; }
+            yield return 10;
+            var gc = FindAll("Runtime.Game.GameController", true).FirstOrDefault();
+            if (gc == null) { L("GameController not found"); yield break; }
+            if (fresh)
+            {
+                var psc0 = FindAll("Runtime.Player.States.PlayerStateController", true).FirstOrDefault();
+                if (psc0 != null && !((Il2CppObjectBase)psc0).Cast<Behaviour>().enabled)
+                { Safe(() => Call(gc, "OnCutscenesCompleted"), "OnCutscenesCompleted"); L("intro cutscene force-completed"); }
+                yield return 3;
+                UnityEngine.Random.InitState(20261029);
+                var skillT = Ty("Runtime.Progression.Skills.Skill");
+                foreach (var s in Resources.FindObjectsOfTypeAll(Il2CppType.From(skillT)).Select(o => Wrap(skillT, o))
+                             .OrderBy(s => Comp2(s).name, StringComparer.Ordinal).Take(2).ToList())
+                {
+                    int need = Convert.ToInt32(Safe(() => Call(s, "GetXpToNextLevel"), "GetXpToNextLevel"));
+                    Safe(() => Call(s, "AddExperience", need + 1), "AddExperience");
+                    L($"saveload: skill {Comp2(s).name} +{need + 1} xp");
+                    yield return 8;
+                }
+                var staff = Singleton("Runtime.Staff.StaffManager");
+                for (int i = 0; i < 2; i++) { Safe(() => Call(staff, "SpawnStaffMemberAtPlayer"), "SpawnStaffMemberAtPlayer"); yield return 2; }
+                L("saveload: staff " + Convert.ToInt32(Get(Get(staff, "Staff"), "Count") ?? -1));
+                yield return 15;
+                // More saved systems: item prices and shop availability, two zombie corpses (ragdolls, loot), the raid.
+                var itemT = Ty("Runtime.Item.ItemData");
+                foreach (var it in Resources.FindObjectsOfTypeAll(Il2CppType.From(itemT)).Select(o => Wrap(itemT, o))
+                             .Where(i => Convert.ToBoolean(Get(i, "CanBeSold") ?? false))
+                             .OrderBy(i => Comp2(i).name, StringComparer.Ordinal).Take(3).ToList())
+                {
+                    int price = Convert.ToInt32(Get(it, "MarkedPrice") ?? 0) + 7;
+                    Safe(() => Call(it, "SetMarkedPrice", price), "SetMarkedPrice");
+                    Safe(() => Call(it, "SetAvailableForPurchase", true), "SetAvailableForPurchase");
+                    L($"saveload: item {Comp2(it).name} price {price}");
+                }
+                var zs = Singleton("Runtime.Events.ZombieSpawner");
+                var pt = Comp(player).transform;
+                for (int i = 0; i < 2; i++)
+                {
+                    var at = pt.position + Quaternion.Euler(0, 180 * i, 0) * Vector3.forward * 8f;
+                    var z = Safe(() => Call(zs, "SpawnAtPoint", at, Quaternion.identity), "SpawnAtPoint");
+                    yield return 2;
+                    var dmg = z == null ? null : Get(Get(z, "Combatant"), "Damageable");
+                    if (dmg != null) { Safe(() => Call(dmg, "Kill"), "Kill"); L("saveload: zombie killed"); }
+                }
+                yield return 5;
+                Safe(() => Call(Singleton("Runtime.Raid.RaidManager"), "RevealCurrentRaid"), "RevealCurrentRaid");
+                L("saveload: raid revealed");
+                yield return 5;
+            }
+            else yield return 10;
+            L("saveload: current slot " + Get(gc, "_currentSaveSlot"));
+            var en = Safe(() => Call(gc, "SaveGameCoroutine"), "SaveGameCoroutine");
+            if (en == null) yield break;
+            ((Il2CppObjectBase)gc).Cast<MonoBehaviour>().StartCoroutine(((Il2CppObjectBase)en).Cast<Il2CppSystem.Collections.IEnumerator>());
+            L("saveload: save requested");
+            yield return 10;
+            L("saveload done");
         }
 
         static UnityEngine.Object Comp2(object o) => ((Il2CppObjectBase)o).Cast<UnityEngine.Object>();

@@ -24,6 +24,102 @@ namespace MethodProbe
             navLog = Path.Combine(Path.GetDirectoryName(output), "navlog.txt");
             scenarioLog = Path.Combine(Path.GetDirectoryName(output), "scenario.log");
             if (Environment.GetEnvironmentVariable("UDK_FEATURES") == "1") StartCoroutine(Features());
+            var sl = Environment.GetEnvironmentVariable("UDK_SAVELOAD");
+            if (sl == "a" || sl == "b") StartCoroutine(SaveLoad(sl == "a"));
+        }
+
+        // Scenario.SaveLoad on the original side. Phase a (with UDK_NEWGAME): new game, two skill level-ups, two staff,
+        // then the game's own save (SaveGameCoroutine) into SaveLoadSlot. Phase b (without UDK_NEWGAME): the menu loads
+        // that slot and the same save runs again, leaving before/after snapshots in the slot's ring. Quits when done.
+        const int SaveLoadSlot = 3;
+
+        System.Collections.IEnumerator SaveLoad(bool fresh)
+        {
+            t0 = Time.realtimeSinceStartup;
+            if (!fresh)
+            {
+                UnityEngine.Object menu = null;
+                for (int i = 0; i < 90 && menu == null; i++)
+                {
+                    menu = First("Runtime.Menu.MenuController");
+                    if (menu == null) yield return new WaitForSecondsRealtime(1);
+                }
+                if (menu == null) { L("menu not found"); yield break; }
+                yield return new WaitForSecondsRealtime(5);
+                Safe(() => Call(menu, "OnExistingSaveSelected", SaveLoadSlot), "OnExistingSaveSelected");
+                L("existing save requested, slot " + SaveLoadSlot);
+            }
+            Component player = null;
+            for (int i = 0; i < 180 && player == null; i++)
+            {
+                player = First("Runtime.Player.Movement.DefaultPlayerMovementProvider", true) as Component;
+                if (player == null) yield return new WaitForSecondsRealtime(1);
+            }
+            if (player == null) { L("gave up finding player"); yield break; }
+            yield return new WaitForSecondsRealtime(10);
+            var gc = First("Runtime.Game.GameController", true) as MonoBehaviour;
+            if (gc == null) { L("GameController not found"); yield break; }
+            if (fresh)
+            {
+                var psc0 = First("Runtime.Player.States.PlayerStateController", true) as Behaviour;
+                if (psc0 != null && !psc0.enabled) { Safe(() => Call(gc, "OnCutscenesCompleted"), "OnCutscenesCompleted"); L("intro cutscene force-completed"); }
+                yield return new WaitForSecondsRealtime(3);
+                UnityEngine.Random.InitState(20261029);
+                var skills = Resources.FindObjectsOfTypeAll(Ty("Runtime.Progression.Skills.Skill"));
+                Array.Sort(skills, (x, y) => string.CompareOrdinal(x.name, y.name));
+                for (int i = 0; i < Math.Min(2, skills.Length); i++)
+                {
+                    var s = skills[i];
+                    int need = Convert.ToInt32(Safe(() => Call(s, "GetXpToNextLevel"), "GetXpToNextLevel"));
+                    Safe(() => Call(s, "AddExperience", need + 1), "AddExperience");
+                    L($"saveload: skill {s.name} +{need + 1} xp");
+                    yield return new WaitForSecondsRealtime(8);
+                }
+                var staff = Singleton("Runtime.Staff.StaffManager");
+                for (int i = 0; i < 2; i++) { Safe(() => Call(staff, "SpawnStaffMemberAtPlayer"), "SpawnStaffMemberAtPlayer"); yield return new WaitForSecondsRealtime(2); }
+                L("saveload: staff " + ((Get(staff, "Staff") as System.Collections.ICollection)?.Count ?? -1));
+                yield return new WaitForSecondsRealtime(15);
+                // Scenario.SaveLoad's extra saved systems: item prices, two zombie corpses, the raid.
+                var items = Resources.FindObjectsOfTypeAll(Ty("Runtime.Item.ItemData"));
+                Array.Sort(items, (x, y) => string.CompareOrdinal(x.name, y.name));
+                int done = 0;
+                foreach (var it in items)
+                {
+                    if (done == 3) break;
+                    if (!Convert.ToBoolean(Get(it, "CanBeSold") ?? false)) continue;
+                    int price = Convert.ToInt32(Get(it, "MarkedPrice") ?? 0) + 7;
+                    Safe(() => Call(it, "SetMarkedPrice", price), "SetMarkedPrice");
+                    Safe(() => Call(it, "SetAvailableForPurchase", true), "SetAvailableForPurchase");
+                    L($"saveload: item {it.name} price {price}");
+                    done++;
+                }
+                var zs = Singleton("Runtime.Events.ZombieSpawner");
+                for (int i = 0; i < 2; i++)
+                {
+                    var at = player.transform.position + Quaternion.Euler(0, 180 * i, 0) * Vector3.forward * 8f;
+                    var z = Safe(() => Call(zs, "SpawnAtPoint", at, Quaternion.identity), "SpawnAtPoint");
+                    yield return new WaitForSecondsRealtime(2);
+                    var dmg = z == null ? null : Get(Get(z, "Combatant"), "Damageable");
+                    if (dmg != null) { Safe(() => Call(dmg, "Kill"), "Kill"); L("saveload: zombie killed"); }
+                }
+                yield return new WaitForSecondsRealtime(5);
+                Safe(() => Call(Singleton("Runtime.Raid.RaidManager"), "RevealCurrentRaid"), "RevealCurrentRaid");
+                L("saveload: raid revealed");
+                yield return new WaitForSecondsRealtime(5);
+                // UdkNewGame starts in slot 0; the original side's scenario creates the game in its configured slot.
+                var f = gc.GetType().GetField("_currentSaveSlot", All);
+                if (f != null) f.SetValue(gc, SaveLoadSlot);
+            }
+            else yield return new WaitForSecondsRealtime(10);
+            L("saveload: current slot " + Get(gc, "_currentSaveSlot"));
+            var en = Safe(() => Call(gc, "SaveGameCoroutine") as System.Collections.IEnumerator, "SaveGameCoroutine");
+            if (en == null) yield break;
+            gc.StartCoroutine(en);
+            L("saveload: save requested");
+            yield return new WaitForSecondsRealtime(10);
+            L("saveload done");
+            yield return new WaitForSecondsRealtime(3);
+            Application.Quit();
         }
 
         // Scenario.Features on the original side, call for call and wait for wait; UdkNewGame (UDK_NEWGAME) has
@@ -115,6 +211,17 @@ namespace MethodProbe
                 yield return new WaitForSecondsRealtime(1);
             }
             L("features: zombies spawned");
+            if (Environment.GetEnvironmentVariable("UDK_THREATDEBUG") == "1")
+            {
+                // The detectors' own _debug logging says what each threat check saw (range, hits, allies, races).
+                int n = 0;
+                foreach (var d in UnityEngine.Object.FindObjectsByType(Ty("Runtime.Combat.ProximityThreatDetector"), FindObjectsSortMode.None))
+                {
+                    var f = d.GetType().GetField("_debug", All);
+                    if (f != null) { f.SetValue(d, true); n++; }
+                }
+                L("features: threat debug on " + n + " detectors");
+            }
             yield return new WaitForSecondsRealtime(40);
             L("features done");
             yield return new WaitForSecondsRealtime(3);
