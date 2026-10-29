@@ -19,6 +19,9 @@ outside Unity; a call profile still sees them.
       hook lists, in batches, for the recovered Runtime methods udk.divergence scores below max score: one
       original-side run per batch tells which divergent hand-recovered bodies the original actually runs.
 
+  python -m udk.verify divergence-fired <divergence.tsv> <out.tsv> <original methodprobe.jsonl>...
+      the divergent recovered methods those runs saw fire, ranked: the work queue for hand-recovered bodies.
+
   python -m udk.verify diff<original methodprobe.jsonl> <original days> <ours methodprobe.jsonl> <ours days> <out.tsv>
                             [<original until s> <ours until s>]
       calls per in-game day, side by side. DEAD = the original calls it and ours never does (the served=0 class);
@@ -152,6 +155,37 @@ def hooks_divergence(divergence_p, script, max_score, batch, out_prefix):
     print(f"{len(ranked)} divergent methods -> {(len(ranked) + n - 1) // n} batches of <= {n} ({out_prefix}-N.txt)")
 
 
+def divergence_fired(divergence_p, out, *runs):
+    """The divergent recovered methods the original actually ran: udk.divergence rows (non-stub, Runtime) whose
+    method fired in any of the original-side probe runs over the hooks-divergence batches, highest rank first."""
+    calls, hooked = {}, set()
+    for r in runs:
+        for l in io.open(r, encoding="utf-8"):
+            try:
+                o = json.loads(l)
+            except ValueError:
+                continue
+            if "calls" in o:
+                m = o["method"].split("(")[0]
+                hooked.add(m)
+                calls[m] = max(calls.get(m, 0), o["calls"], o.get("entered", 0))
+    rows = []
+    for row in io.open(divergence_p, encoding="utf-8"):
+        f = row.rstrip("\n").split("\t")
+        if f[0] == "rank" or f[1] != "Runtime" or f[5] == "stub":
+            continue
+        o = owner(f[2])
+        k = next((x for x in (o, o and o.replace("+", ".")) if x in hooked), None)
+        if k and calls[k] > 0:
+            rows.append((float(f[0]), calls[k], f[4], f[2], f[5], f[7]))
+    rows.sort(reverse=True)
+    with io.open(out, "w", encoding="utf-8", newline="\n") as w:
+        w.write("rank\toriginal_calls\tscore\tkey\tsrc\tmissing\n")
+        w.writelines("%.2f\t%d\t%s\t%s\t%s\t%s\n" % r for r in rows)
+    print(f"{len(hooked)} hooked, {sum(1 for v in calls.values() if v)} fired in the original, "
+          f"{len(rows)} divergent rows -> {out}")
+
+
 # Called directly by the autoplay bot (D:/walking-trade-ref/SCENARIO-driver.md [FORCE]); identical on both sides.
 FORCED = {
     "Runtime.Game.GameController::OnCutscenesCompleted", "Runtime.Item.ItemObject::Initialize",
@@ -241,4 +275,5 @@ def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=
 
 if __name__ == "__main__":
     cmd, *a = sys.argv[1:]
-    {"hooks": hooks, "hooks-types": hooks_types, "hooks-divergence": hooks_divergence, "diff": diff}[cmd](*a)
+    {"hooks": hooks, "hooks-types": hooks_types, "hooks-divergence": hooks_divergence,
+     "divergence-fired": divergence_fired, "diff": diff}[cmd](*a)
