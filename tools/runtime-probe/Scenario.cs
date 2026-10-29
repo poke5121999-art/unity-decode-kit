@@ -178,6 +178,12 @@ namespace MethodProbe
             yield return 3;
             Call(menu, "OnSaveCreated");
             L("new game requested, slot " + slot);
+            if (mode == "features")
+            {
+                var f = Features();
+                while (f.MoveNext()) yield return f.Current;
+                yield break;
+            }
             if (mode != "autoplay") yield break;
 
             object player = null;
@@ -246,6 +252,59 @@ namespace MethodProbe
                 lastDay = Day;
             }
         }
+
+        // Drives the systems the day loop never reaches, with the same calls and waits as PluginMono's features mode on
+        // our build: skill level-ups (XP bar, level-up popup), hired staff, and zombies next to the player (melee
+        // hits, effect pools). Random is seeded so both builds pick the same staff templates.
+        static IEnumerator<double> Features()
+        {
+            object player = null;
+            for (int i = 0; i < 120 && player == null; i++)
+            {
+                player = FindAll("Runtime.Player.Movement.DefaultPlayerMovementProvider", true).FirstOrDefault();
+                if (player == null) yield return 1;
+            }
+            if (player == null) { L("gave up finding player"); yield break; }
+            yield return 10;
+            var psc0 = FindAll("Runtime.Player.States.PlayerStateController", true).FirstOrDefault();
+            if (psc0 != null && !((Il2CppObjectBase)psc0).Cast<Behaviour>().enabled)
+            {
+                var gc0 = FindAll("Runtime.Game.GameController", true).FirstOrDefault();
+                if (gc0 != null) { Safe(() => Call(gc0, "OnCutscenesCompleted"), "OnCutscenesCompleted"); L("intro cutscene force-completed"); }
+            }
+            yield return 3;
+            UnityEngine.Random.InitState(20261029);
+
+            var skillT = Ty("Runtime.Progression.Skills.Skill");
+            var skills = Resources.FindObjectsOfTypeAll(Il2CppType.From(skillT)).Select(o => Wrap(skillT, o))
+                .OrderBy(s => Comp2(s).name, StringComparer.Ordinal).Take(2).ToList();
+            foreach (var s in skills)
+            {
+                int need = Convert.ToInt32(Safe(() => Call(s, "GetXpToNextLevel"), "GetXpToNextLevel"));
+                Safe(() => Call(s, "AddExperience", need + 1), "AddExperience");
+                L($"features: skill {Comp2(s).name} +{need + 1} xp");
+                yield return 8;
+            }
+
+            var staff = Singleton("Runtime.Staff.StaffManager");
+            for (int i = 0; i < 2; i++) { Safe(() => Call(staff, "SpawnStaffMemberAtPlayer"), "SpawnStaffMemberAtPlayer"); yield return 2; }
+            L("features: staff " + Convert.ToInt32(Get(Get(staff, "Staff"), "Count") ?? -1));
+            yield return 15;
+
+            var zs = Singleton("Runtime.Events.ZombieSpawner");
+            var pt = Comp(player).transform;
+            for (int i = 0; i < 3; i++)
+            {
+                var at = pt.position + Quaternion.Euler(0, 120 * i, 0) * Vector3.forward * 6f;
+                Safe(() => Call(zs, "SpawnAtPoint", at, Quaternion.identity), "SpawnAtPoint");
+                yield return 1;
+            }
+            L("features: zombies spawned");
+            yield return 40;
+            L("features done");
+        }
+
+        static UnityEngine.Object Comp2(object o) => ((Il2CppObjectBase)o).Cast<UnityEngine.Object>();
 
         // One pass of the serve loop: pay what lies on the counter, start serving a queued customer, and return the
         // ServingPlayerState whose offer is open (the caller accepts it, waits, then stops serving).
