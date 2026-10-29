@@ -143,6 +143,14 @@ namespace MethodProbe
                           $"hasDest={Get(o, "_hasDestination")} calc={Get(o, "IsCalculatingPath")} unreach={Get(o, "IsDestinationUnreachable")} " +
                           $"path={Get(o, "_currentPathIndex")}/{(path == null ? -1 : path.Count)} v={Get(o, "_currentVelocity"):F2} stuck={Get(o, "StuckTime"):F1} " +
                           $"kin={rb?.isKinematic} rbv={rb?.linearVelocity.magnitude:F2}\n");
+                if (Get(o, "_hasDestination") is bool has && has && rb != null && rb.linearVelocity.magnitude < 1f)
+                {
+                    sb.Append($"{Time.realtimeSinceStartup:F0}\t    blockers {c.gameObject.name}: ");
+                    int k = 0;
+                    foreach (var h in Physics.OverlapSphere(c.transform.position + Vector3.up * 0.9f, 1.0f, -1, QueryTriggerInteraction.Ignore))
+                        if (h.attachedRigidbody != rb && k++ < 8) sb.Append(h.gameObject.name + "@" + h.transform.position.ToString("F1") + ", ");
+                    sb.Append("\n");
+                }
             }
             if (sb.Length > 0) try { File.AppendAllText(navLog, sb.ToString()); } catch { }
         }

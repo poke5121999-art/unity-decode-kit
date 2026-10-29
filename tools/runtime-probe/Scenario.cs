@@ -349,6 +349,13 @@ namespace MethodProbe
                       $"hasDest={Get(n, "_hasDestination")} calc={Get(n, "IsCalculatingPath")} unreach={Get(n, "IsDestinationUnreachable")} " +
                       $"path={Get(n, "_currentPathIndex")}/{corners} v={Get(n, "_currentVelocity"):F2} stuck={Get(n, "StuckTime"):F1} " +
                       $"kin={rb?.isKinematic} rbv={rb?.linearVelocity.magnitude:F2}");
+                    // A mob pushing toward its destination at walking pace below 1 m/s is blocked: name what it touches.
+                    if (Convert.ToBoolean(Get(n, "_hasDestination")) && rb != null && rb.linearVelocity.magnitude < 1f)
+                    {
+                        var hits = Physics.OverlapSphere(c.transform.position + Vector3.up * 0.9f, 1.0f, -1, QueryTriggerInteraction.Ignore);
+                        var names = hits.Where(h => h.attachedRigidbody != rb).Select(h => h.gameObject.name + "@" + h.transform.position.ToString("F1")).Take(8);
+                        L($"    blockers {c.gameObject.name}: {string.Join(", ", names)}");
+                    }
                     return true;
                 }, "NavLog");
         }
