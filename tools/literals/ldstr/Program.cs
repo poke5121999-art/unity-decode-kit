@@ -28,7 +28,9 @@ class P
         foreach (var t in asm.MainModule.GetTypes())
             foreach (var m in t.Methods.Where(m => m.HasBody))
             {
-                var lits = m.Body.Instructions.Where(i => i.OpCode == OpCodes.Ldstr).Select(i => Esc((string)i.Operand));
+                var lits = a.Length > 2 && a[2] == "stfld"
+                    ? m.Body.Instructions.Where(i => i.OpCode == OpCodes.Stfld).Select(i => Esc(((FieldReference)i.Operand).DeclaringType.FullName.Replace('/', '.') + "::" + ((FieldReference)i.Operand).Name))
+                    : m.Body.Instructions.Where(i => i.OpCode == OpCodes.Ldstr).Select(i => Esc((string)i.Operand));
                 w.WriteLine(t.FullName.Replace('/', '.') + "$$" + m.Name + "\t" + m.Parameters.Count + "\t" + string.Join("\u0001", lits));
             }
     }
