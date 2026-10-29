@@ -15,6 +15,10 @@ outside Unity; a call profile still sees them.
       hook list: every Runtime method whose type and name match, COMDAT-folded ones left out. For walking up a
       DEAD chain (who should have called it) one layer at a time.
 
+  python -m udk.verify hooks-divergence <divergence.tsv> <script.json> <max score> <batch size> <out prefix>
+      hook lists, in batches, for the recovered Runtime methods udk.divergence scores below max score: one
+      original-side run per batch tells which divergent hand-recovered bodies the original actually runs.
+
   python -m udk.verify diff<original methodprobe.jsonl> <original days> <ours methodprobe.jsonl> <ours days> <out.tsv>
                             [<original until s> <ours until s>]
       calls per in-game day, side by side. DEAD = the original calls it and ours never does (the served=0 class);
@@ -125,6 +129,29 @@ def hooks_types(dump, script, type_re, method_re, out):
     print(f"{len(lines)} hook lines, {len(dropped)} folded left out -> {out}")
 
 
+def hooks_divergence(divergence_p, script, max_score, batch, out_prefix):
+    """Hook lists for the recovered (non-stub) Runtime methods that udk.divergence scores below max_score, split
+    into batches of `batch` lines (out_prefix-1.txt, -2.txt, ...), so one original-side run per batch shows which
+    divergent bodies the original actually executes. Highest rank first; COMDAT-folded methods left out."""
+    folded = folded_names(script)
+    ranked, seen = [], set()
+    for row in io.open(divergence_p, encoding="utf-8"):
+        f = row.rstrip("\n").split("\t")
+        if f[0] == "rank" or f[1] != "Runtime" or f[5] == "stub" or float(f[4]) >= float(max_score):
+            continue
+        o = owner(f[2])
+        if o and o not in seen and o.replace("+", ".") not in folded:
+            seen.add(o)
+            ranked.append(o)
+    n = int(batch)
+    for i in range(0, len(ranked), n):
+        path = f"{out_prefix}-{i // n + 1}.txt"
+        with io.open(path, "w", encoding="utf-8", newline="\n") as w:
+            w.write(f"# udk.verify hooks-divergence score<{max_score}, batch {i // n + 1}\n")
+            w.writelines(l + "\n" for l in ranked[i:i + n])
+    print(f"{len(ranked)} divergent methods -> {(len(ranked) + n - 1) // n} batches of <= {n} ({out_prefix}-N.txt)")
+
+
 # Called directly by the autoplay bot (D:/walking-trade-ref/SCENARIO-driver.md [FORCE]); identical on both sides.
 FORCED = {
     "Runtime.Game.GameController::OnCutscenesCompleted", "Runtime.Item.ItemObject::Initialize",
@@ -161,12 +188,6 @@ def profile(path, until=None):
 # Divergences already found and waiting on a decision: reported as KNOWN with the reason, not as DEAD, so the gate
 # keeps failing only on new ones. Remove an entry once it is fixed or accepted for good.
 KNOWN = {
-    "Runtime.Navigation.NavigationManager::CalculatePathAsync":
-        "ours paths through a hand-written RigidbodyNavigator.TryCalculateAndApplyPathAsync (NavMesh.CalculatePath), "
-        "the original through the NavigationManager async queue; rebuild vs keep is the owner's call (2026-10-28)",
-    "Runtime.Navigation.NavigationManager::IsPathValid": "same as NavigationManager::CalculatePathAsync",
-    "Runtime.Navigation.NavigationManager::StartProcessingIfNeeded": "same as NavigationManager::CalculatePathAsync",
-    "Runtime.Mob.Navigation.RigidbodyNavigator::TryCalculateAndApplyPathAsync": "same as NavigationManager::CalculatePathAsync",
     "Runtime.Achievements.SteamAchievementPlatform::GetIntStat": "ours runs NullAchievementPlatform (no Steam)",
     "Runtime.Achievements.NullAchievementPlatform::GetIntStat": "ours runs NullAchievementPlatform (no Steam)",
 }
@@ -220,4 +241,4 @@ def diff(orig_p, orig_days, ours_p, ours_days, out, orig_until=None, ours_until=
 
 if __name__ == "__main__":
     cmd, *a = sys.argv[1:]
-    {"hooks": hooks, "hooks-types": hooks_types, "diff": diff}[cmd](*a)
+    {"hooks": hooks, "hooks-types": hooks_types, "hooks-divergence": hooks_divergence, "diff": diff}[cmd](*a)
